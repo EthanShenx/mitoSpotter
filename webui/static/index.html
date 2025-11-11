@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>mitoSpotter Control Center</title>
+      <link rel="icon" type="image/png" href="/static/logo.png" />
+      <link rel="shortcut icon" type="image/png" href="/static/logo.png" />
+      <link rel="stylesheet" href="/static/styles.css" />
+    </head>
+  <body>
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand">
+          <h1><em>mitoSpotter</em></h1>
+          <p>A HMM-based tool to classify nuclear genes and mitochondria genes in an annotation-independent manner.</p>
+        </div>
+        <img src="/static/logo.png" alt="mitoSpotter logo" class="site-logo" />
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section class="card">
+        <form id="decode-form" class="form-grid">
+          <div class="form-group">
+            <label>Decoder Type</label>
+            <div role="group" aria-label="Decoder Type" class="radio-row">
+              <label class="radio"><input type="radio" name="mode" value="nt1" id="mode_nt1" /> Single nucleotide (1-nt)</label>
+              <label class="radio"><input type="radio" name="mode" value="nt2" id="mode_nt2" /> Di-nucleotide (2-nt)</label>
+              <label class="radio"><input type="radio" name="mode" value="nt3" id="mode_nt3" /> Tri-nucleotide (3-nt)</label>
+              <label class="radio"><input type="radio" name="mode" value="codon" id="mode_codon" checked /> Codon-based</label>
+              <label class="radio"><input type="radio" name="mode" value="aa" id="mode_aa" /> Amino acid</label>
+            </div>
+          </div>
+          <div class="form-group span-2">
+            <div class="label-row">
+              <label for="sequence_text">Nucleotide Sequences</label>
+              <button
+                type="button"
+                id="load-demo"
+                class="demo-button"
+              >
+                Load demo data
+              </button>
+            </div>
+            <textarea
+              id="sequence_text"
+              name="sequence_text"
+              rows="6"
+              placeholder=">seq1\nATG...\n>seq2\n... or enter raw sequences per line"
+            ></textarea>
+            <small>Paste FASTA-formatted or plain sequences (optional).</small>
+          </div>
+
+          <div class="form-group">
+            <label for="fasta_file">Upload FASTA</label>
+            <input type="file" id="fasta_file" name="fasta_file" accept=".fa,.fasta,.fna,.txt" />
+            <small>Provide a single FASTA file. You may also paste sequences above.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="species">Species</label>
+            <select id="species" name="species" required></select>
+            <small>Choose the species-specific mitoSpotter model.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="code">Genetic Code</label>
+            <select id="code" name="code">
+              <option value="auto" selected>Auto detect</option>
+              <option value="standard">Standard</option>
+              <option value="vertebrate_mito">Vertebrate Mitochondrial</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="min_orf_group">
+            <label for="min_orf_nt">Minimum ORF (nt)</label>
+            <input type="number" id="min_orf_nt" name="min_orf_nt" min="30" value="150" />
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox">
+              <input type="checkbox" id="emit_path" name="emit_path" />
+              <span>Include Viterbi state path</span>
+            </label>
+          </div>
+
+          <div class="form-actions span-2">
+            <button type="submit" class="primary">Run Decode</button>
+            <button type="reset" class="secondary">Clear</button>
+          </div>
+        </form>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="card" id="results-card" hidden>
+        <div class="card-header">
+          <h2>Results</h2>
+        </div>
+        <p id="results-summary" class="results-summary" hidden></p>
+          <div class="table-wrapper">
+            <table id="results-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Log Prob</th>
+                  <th>Winner</th>
+                  <th>Nuclear%</th>
+                  <th>Mito%</th>
+                  <th id="len-header">Codons</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        <div id="paths" class="paths"></div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <a href="https://github.com/EthanShenx" target="_blank" rel="noopener noreferrer">Developed by Ethan Shen</a>
+    </footer>
+
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
