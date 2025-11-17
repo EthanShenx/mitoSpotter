@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Translate ORF or CDS into amino acid token sequences (per-transcript TSV).
+# Translate ORF into amino acid token sequences (per-transcript TSV),
+# and split into train (first 70%) and holdout (last 30%).
 # Output one row per transcript: <transcript_id>\tA A A ...
+
 from Bio import SeqIO
 import argparse, re, os, sys
 
@@ -31,11 +33,12 @@ def clean_nt(s):
     s = str(s).upper().replace("U", "T")
     return re.sub(r"[^ACGT]", "", s)
 
-def find_longest_orf_nt(seq, stop_codons, min_nt=150):
+def find_longest_orf_nt(seq, stop_codons):
     # Find longest ORF across 3 frames (stop codons excluded)
+    # No min length filter anymore.
     s = clean_nt(seq)
     best = ""
-    for frame in (0,1,2):
+    for frame in (0, 1, 2):
         start = frame
         i = frame
         while i + 3 <= len(s):
@@ -46,17 +49,18 @@ def find_longest_orf_nt(seq, stop_codons, min_nt=150):
                 start = i + 3
             i += 3
         # tail
-        tail = s[start: len(s) - ((len(s)-start) % 3)]
-        if len(tail) > len(best): best = tail
-    return best if len(best) >= min_nt else ""
+        tail = s[start: len(s) - ((len(s) - start) % 3)]
+        if len(tail) > len(best):
+            best = tail
+    return best  # may be empty string if no valid ORF
 
 def nt_to_codons(nt):
-    return [nt[i:i+3] for i in range(0, len(nt)-2, 3)]
+    return [nt[i:i+3] for i in range(0, len(nt) - 2, 3)]
 
 def codons_to_aa(codons, table):
     aas = []
     for c in codons:
-        if len(c) != 3: 
+        if len(c) != 3:
             return None
         aa = table.get(c, "X")
         if aa == "*" or aa == "X":  # stop or unknown -> stop translation or invalid
@@ -73,50 +77,118 @@ def codons_to_aa(codons, table):
 
 # --- CLI ---
 def main():
-    ap = argparse.ArgumentParser(description="Translate CDS/ORF into AA token sequences.")
+    ap = argparse.ArgumentParser(
+        description=(
+            "Translate longest ORF into AA token sequences, "
+            "split into train (first 70%) and holdout (last 30%)."
+        )
+    )
     ap.add_argument("--fasta", required=True, help="Input cDNA or CDS FASTA.")
-    ap.add_argument("--genetic_code", choices=["standard","vertebrate_mito","auto"], default="auto",
-                    help="Which code to use for translation; auto tries mito if seq from chrM earlier (not implemented) - use explicit.")
-    ap.add_argument("--segment", choices=["cds","orf"], default="orf",
-                    help="cds=translate full cleaned input; orf=find longest ORF by stops then translate.")
-    ap.add_argument("--min_nt", type=int, default=150)
-    ap.add_argument("--out_tsv", required=True)
+    ap.add_argument(
+        "--genetic_code",
+        choices=["standard", "vertebrate_mito", "auto"],
+        default="auto",
+        help=(
+            "Which code to use for translation; auto tries mito stops first, "
+            "then standard stops if needed."
+        ),
+    )
+    # segment is kept only as an explicit 'orf' flag for compatibility
+    ap.add_argument(
+        "--segment",
+        choices=["orf"],
+        default="orf",
+        help="Only 'orf' is supported: find longest ORF by stops then translate.",
+    )
+    # removed --min_nt and all length-based filtering
+    ap.add_argument(
+        "--train_tsv",
+        required=True,
+        help="Output TSV for training (first 70% of AA sequences).",
+    )
+    ap.add_argument(
+        "--holdout_tsv",
+        required=True,
+        help="Output TSV for holdout (last 30% of AA sequences).",
+    )
+    ap.add_argument(
+        "--train_frac",
+        type=float,
+        default=0.7,
+        help="Fraction of sequences to use for training (default: 0.7).",
+    )
     args = ap.parse_args()
 
+    # For translation table: keep original behavior (standard vs non-standard/auto)
     table = STD_CODON_TO_AA if args.genetic_code == "standard" else MITO_CODON_TO_AA
 
-    os.makedirs(os.path.dirname(args.out_tsv) or ".", exist_ok=True)
-    kept = 0
-    with open(args.out_tsv, "w") as fo:
-        for rec in SeqIO.parse(args.fasta, "fasta"):
-            tid = rec.id.split(".")[0]
-            if args.segment == "cds":
-                nt = clean_nt(rec.seq)
-                if len(nt) < args.min_nt: 
-                    continue
-            else:
-                # choose stop set based on requested genetic code when segment==orf
-                if args.genetic_code == "standard":
-                    stops = {"TAA","TAG","TGA"}
-                elif args.genetic_code == "vertebrate_mito":
-                    stops = {"TAA","TAG","AGA","AGG"}
-                else:
-                    # auto: attempt vertebrate mito stops first, then standard
-                    stops = {"TAA","TAG","AGA","AGG"}
-                nt = find_longest_orf_nt(rec.seq, stops, min_nt=args.min_nt)
-                if not nt and args.genetic_code == "auto":
-                    # fallback to standard stops
-                    nt = find_longest_orf_nt(rec.seq, {"TAA","TAG","TGA"}, min_nt=args.min_nt)
-                if not nt:
-                    continue
-            cods = nt_to_codons(nt)
-            aas = codons_to_aa(cods, table)
-            if not aas: 
-                continue
-            fo.write(tid + "\t" + " ".join(aas) + "\n")
-            kept += 1
-    print(f"[OK] wrote {kept} aa rows -> {args.out_tsv}")
+    lines = []
+
+    for rec in SeqIO.parse(args.fasta, "fasta"):
+        tid = rec.id.split(".")[0]
+
+        # Only ORF mode is supported now
+        if args.genetic_code == "standard":
+            stops = {"TAA", "TAG", "TGA"}
+        elif args.genetic_code == "vertebrate_mito":
+            stops = {"TAA", "TAG", "AGA", "AGG"}
+        else:  # auto: try mito stops first
+            stops = {"TAA", "TAG", "AGA", "AGG"}
+
+        nt = find_longest_orf_nt(rec.seq, stops)
+
+        if not nt and args.genetic_code == "auto":
+            # fallback to standard stops
+            nt = find_longest_orf_nt(rec.seq, {"TAA", "TAG", "TGA"})
+        if not nt:
+            # no ORF found
+            continue
+
+        cods = nt_to_codons(nt)
+        aas = codons_to_aa(cods, table)
+        if not aas:
+            continue
+
+        line = tid + "\t" + " ".join(aas)
+        lines.append(line)
+
+    total = len(lines)
+    if total == 0:
+        print("[WARN] no AA sequences passed filters; nothing to write.")
+        return
+
+    # --- split 70% / 30% ---
+    split_idx = int(total * args.train_frac)
+    if split_idx <= 0:
+        split_idx = 0
+    elif split_idx >= total:
+        split_idx = total
+
+    train_lines = lines[:split_idx]
+    holdout_lines = lines[split_idx:]
+
+    # --- write outputs ---
+    os.makedirs(os.path.dirname(args.train_tsv) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(args.holdout_tsv) or ".", exist_ok=True)
+
+    with open(args.train_tsv, "w") as f_train:
+        for line in train_lines:
+            f_train.write(line + "\n")
+
+    with open(args.holdout_tsv, "w") as f_hold:
+        for line in holdout_lines:
+            f_hold.write(line + "\n")
+
+    print(f"[OK] total={total}, train={len(train_lines)}, holdout={len(holdout_lines)}")
+    print(f"train -> {args.train_tsv}")
+    print(f"holdout -> {args.holdout_tsv}")
 
 if __name__ == "__main__":
     main()
 
+# python3 translate_orf_split_aa.py \
+#   --fasta transcripts.fa \
+#   --genetic_code standard \
+#   --train_tsv out/train_aa_70.tsv \
+#   --holdout_tsv out/holdout_aa_30.tsv \
+#   --train_frac 0.7

@@ -1,67 +1,82 @@
 #!/usr/bin/env python3
-# Emit non-overlapping 3-nt tokens from CDS/ORF FASTA -> TSV (id \t AAA CCC ...).
+# Emit non-overlapping 3-nt tokens from CDS FASTA -> TSV,
+# and split into train (first 70%) and holdout (last 30%).
+
 from Bio import SeqIO
-import argparse, re, os
+import argparse, os
 
 VALID = set("ACGT")
 
 def clean_nt(s):
-    return "".join([c for c in str(s).upper().replace("U","T") if c in VALID])
-
-def find_longest_orf_nt(seq, stops, min_nt=150):
-    s = clean_nt(seq)
-    best = ""
-    for frame in (0,1,2):
-        start = frame
-        i = frame
-        while i + 3 <= len(s):
-            codon = s[i:i+3]
-            if codon in stops:
-                if i - start > len(best): best = s[start:i]
-                start = i + 3
-            i += 3
-        tail = s[start: len(s) - ((len(s)-start) % 3)]
-        if len(tail) > len(best): best = tail
-    return best if len(best) >= min_nt else ""
+    return "".join([c for c in str(s).upper().replace("U", "T") if c in VALID])
 
 def to_triplets_nonoverlap(s):
-    L = (len(s)//3)*3
+    L = (len(s) // 3) * 3
     return [s[i:i+3] for i in range(0, L, 3)]
 
 def main():
-    p = argparse.ArgumentParser(description="Emit non-overlapping 3-nt tokens from FASTA.")
-    p.add_argument("--fasta", required=True)
-    p.add_argument("--segment", choices=["cds","orf"], default="cds")
-    p.add_argument("--code", choices=["standard","vertebrate_mito"], default="standard",
-                   help="Relevant when --segment orf")
-    p.add_argument("--min_nt", type=int, default=150)
-    p.add_argument("--out_tsv", required=True)
+    p = argparse.ArgumentParser(
+        description="Emit non-overlapping 3-nt tokens from CDS FASTA, "
+                    "split into train (first 70%) and holdout (last 30%)."
+    )
+    p.add_argument("--fasta", required=True,
+                   help="Input CDS FASTA file.")
+    p.add_argument("--train_tsv", required=True,
+                   help="Output TSV for training (first 70% of sequences).")
+    p.add_argument("--holdout_tsv", required=True,
+                   help="Output TSV for holdout (last 30% of sequences).")
+    p.add_argument("--train_frac", type=float, default=0.7,
+                   help="Fraction of sequences to use for training (default: 0.7).")
     args = p.parse_args()
 
-    stops_std = {"TAA","TAG","TGA"}
-    stops_mito = {"TAA","TAG","AGA","AGG"}
-    stops = stops_std if args.code == "standard" else stops_mito
+    lines = []
+    for rec in SeqIO.parse(args.fasta, "fasta"):
+        tid = rec.id.split(".")[0]
 
-    os.makedirs(os.path.dirname(args.out_tsv) or ".", exist_ok=True)
-    kept = 0
-    with open(args.out_tsv, "w") as fo:
-        for rec in SeqIO.parse(args.fasta, "fasta"):
-            tid = rec.id.split(".")[0]
-            if args.segment == "cds":
-                s = clean_nt(rec.seq)
-                if len(s) < args.min_nt: 
-                    continue
-            else:
-                s = find_longest_orf_nt(rec.seq, stops, min_nt=args.min_nt)
-                if not s: 
-                    continue
-            trip = to_triplets_nonoverlap(s)
-            if not trip:
-                continue
-            fo.write(tid + "\t" + " ".join(trip) + "\n")
-            kept += 1
-    print(f"[OK] wrote {kept} rows -> {args.out_tsv}")
+        # Treat all input as CDS
+        s = clean_nt(rec.seq)
+
+        trip = to_triplets_nonoverlap(s)
+        if not trip:
+            continue
+
+        line = tid + "\t" + " ".join(trip)
+        lines.append(line)
+
+    total = len(lines)
+    if total == 0:
+        print("[WARN] no sequences passed filters; nothing to write.")
+        return
+
+    split_idx = int(total * args.train_frac)
+    if split_idx <= 0:
+        split_idx = 0
+    elif split_idx >= total:
+        split_idx = total
+
+    train_lines = lines[:split_idx]
+    holdout_lines = lines[split_idx:]
+
+    os.makedirs(os.path.dirname(args.train_tsv) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(args.holdout_tsv) or ".", exist_ok=True)
+
+    with open(args.train_tsv, "w") as f_train:
+        for line in train_lines:
+            f_train.write(line + "\n")
+
+    with open(args.holdout_tsv, "w") as f_hold:
+        for line in holdout_lines:
+            f_hold.write(line + "\n")
+
+    print(f"[OK] total={total}, train={len(train_lines)}, holdout={len(holdout_lines)}")
+    print(f"train -> {args.train_tsv}")
+    print(f"holdout -> {args.holdout_tsv}")
 
 if __name__ == "__main__":
     main()
 
+# python3 cds_triplets_split.py \
+#   --fasta cds.fa \
+#   --train_tsv out/train_3nt.tsv \
+#   --holdout_tsv out/holdout_3nt.tsv \
+#   --train_frac 0.7
