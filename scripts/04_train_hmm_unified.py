@@ -5,6 +5,20 @@
 #   - Viterbi  : Viterbi training (hard EM)
 #   - hybrid   : EM first, then Viterbi fine-tuning
 
+print("""
+    ▗▐     ▞▀▖      ▐  ▐        
+▛▚▀▖▄▜▀ ▞▀▖▚▄ ▛▀▖▞▀▖▜▀ ▜▀ ▞▀▖▙▀▖
+▌▐ ▌▐▐ ▖▌ ▌▖ ▌▙▄▘▌ ▌▐ ▖▐ ▖▛▀ ▌  
+▘▝ ▘▀▘▀ ▝▀ ▝▀ ▌  ▝▀  ▀  ▀ ▝▀▘▘  
+""")
+
+print("""
+▜▘   ▗▐  ▗    ▐  ▗             
+▐ ▛▀▖▄▜▀ ▄ ▝▀▖▜▀ ▄ ▛▀▖▞▀▌      
+▐ ▌ ▌▐▐ ▖▐ ▞▀▌▐ ▖▐ ▌ ▌▚▄▌▗▖▗▖▗▖
+▀▘▘ ▘▀▘▀ ▀▘▝▀▘ ▀ ▀▘▘ ▘▗▄▘▝▘▝▘▝▘
+""")
+
 import argparse
 import json
 import os
@@ -406,6 +420,16 @@ def main():
     A = np.array([[s, 1.0 - s],
                   [1.0 - s, s]], dtype=np.float64)
     pi = np.array([0.5, 0.5], dtype=np.float64)
+
+    print("""""
+
+┏┏ ┛━┏┛┏━┃┏━┛┏━┃┏━┃━┏┛━┏┛┏━┛┏━┃
+┃┃┃┃ ┃ ┃ ┃━━┃┏━┛┃ ┃ ┃  ┃ ┏━┛┏┏┛
+┛┛┛┛ ┛ ━━┛━━┛┛  ━━┛ ┛  ┛ ━━┛┛ ┛
+
+
+    """)
+    print("Initialting...")
 
     # -------------------- Training selection -------------------- #
 
