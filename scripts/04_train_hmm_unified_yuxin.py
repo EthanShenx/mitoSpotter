@@ -14,18 +14,15 @@
 #     --out_model_json model_1nt.json
 
 print("""
-    ▗▐     ▞▀▖      ▐  ▐        
-▛▚▀▖▄▜▀ ▞▀▖▚▄ ▛▀▖▞▀▖▜▀ ▜▀ ▞▀▖▙▀▖
-▌▐ ▌▐▐ ▖▌ ▌▖ ▌▙▄▘▌ ▌▐ ▖▐ ▖▛▀ ▌  
-▘▝ ▘▀▘▀ ▝▀ ▝▀ ▌  ▝▀  ▀  ▀ ▝▀▘▘  
-""")
 
-print("""
-▜▘   ▗▐  ▗    ▐  ▗             
-▐ ▛▀▖▄▜▀ ▄ ▝▀▖▜▀ ▄ ▛▀▖▞▀▌      
-▐ ▌ ▌▐▐ ▖▐ ▞▀▌▐ ▖▐ ▌ ▌▚▄▌▗▖▗▖▗▖
-▀▘▘ ▘▀▘▀ ▀▘▝▀▘ ▀ ▀▘▘ ▘▗▄▘▝▘▝▘▝▘
+┏┏ ┛━┏┛┏━┃┏━┛┏━┃┏━┃━┏┛━┏┛┏━┛┏━┃
+┃┃┃┃ ┃ ┃ ┃━━┃┏━┛┃ ┃ ┃  ┃ ┏━┛┏┏┛
+┛┛┛┛ ┛ ━━┛━━┛┛  ━━┛ ┛  ┛ ━━┛┛ ┛
+
+
 """)
+    
+print("Initiating...")
 
 import argparse
 import json
@@ -379,7 +376,7 @@ def main():
     parser.add_argument("--n_em_iter", type=int, default=20)
 
     # Viterbi-related options
-    parser.add_argument("--n_viterbi_iter", type=int, default=0)
+    parser.add_argument("--n_viterbi_iter", type=int, default=20)
     parser.add_argument("--trans_smooth", type=float, default=1.0)
 
     # General HMM hyper-parameters
@@ -406,16 +403,6 @@ def main():
     A = np.array([[s, 1.0 - s],
                   [1.0 - s, s]], dtype=np.float64)
     pi = np.array([0.5, 0.5], dtype=np.float64)
-
-    print("""""
-
-┏┏ ┛━┏┛┏━┃┏━┛┏━┃┏━┃━┏┛━┏┛┏━┛┏━┃
-┃┃┃┃ ┃ ┃ ┃━━┃┏━┛┃ ┃ ┃  ┃ ┏━┛┏┏┛
-┛┛┛┛ ┛ ━━┛━━┛┛  ━━┛ ┛  ┛ ━━┛┛ ┛
-
-
-    """)
-    print("Initialting...")
 
     # -------------------- Training selection -------------------- #
 

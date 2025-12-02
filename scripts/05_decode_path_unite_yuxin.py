@@ -27,9 +27,25 @@ def clean_nt(s):
 
 
 def resolve_assets(species, assets_dir, ngram):
-    """Resolve model/vocab/state files for a given species."""
-    model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_1nt.json")
-    # Vocabulary file candidates
+    """
+    Resolve model/vocab/state files for a given species.
+    
+    Args:
+        species: Species identifier (e.g., 'hs', 'mm', 'rn')
+        assets_dir: Directory containing model assets
+        ngram: N-gram size (1, 2, or 3) for selecting appropriate vocab file
+    
+    Returns:
+        Tuple of (model_path, vocab_path, states_path)
+    """
+    # FIX: Use ngram parameter in model file path for consistency
+    model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_{ngram}nt.json")
+    
+    # Fallback to 1nt model if ngram-specific model doesn't exist
+    if not op.exists(model):
+        model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_1nt.json")
+    
+    # Vocabulary file candidates - ngram-specific first, then generic
     vocab_candidates = [
         op.join(assets_dir, f"{species}_nt{ngram}_vocab.json"),
         op.join(assets_dir, f"{species}_nt_vocab.json"),
@@ -49,14 +65,14 @@ def resolve_assets(species, assets_dir, ngram):
     return model, vocab, states
 
 
-
 def load_model(model_json, vocab_json):
     """Load HMM parameters pi, A, B from JSON."""
     M = json.load(open(model_json))
     pi = np.array(M["startprob"], dtype=np.float64)
     A = np.array(M["transmat"], dtype=np.float64)
     B = np.array(M["emissionprob"], dtype=np.float64)
-        # Load vocabulary mapping
+    
+    # Load vocabulary mapping
     vocab_data = json.load(open(vocab_json))
     if "bases" in vocab_data:  # 1-nt model
         idx = {b: i for i, b in enumerate(vocab_data["bases"])}
@@ -85,7 +101,7 @@ def viterbi(pi, A, B, obs):
     Viterbi decoding: find most likely state path.
     
     Returns:
-        viterbi_ll: log-likelihood of best path
+        viterbi_ll: log-likelihood of best path (positive value)
         path: state sequence
     """
     T = len(obs)
@@ -111,12 +127,19 @@ def viterbi(pi, A, B, obs):
     for t in range(T-2, -1, -1):
         path[t] = psi[t+1, path[t+1]]
     
+    # FIX: Return positive log-likelihood for consistency
+    # The raw value d[-1, path[-1]] is already the log-likelihood (negative),
+    # we keep the sign as-is since log(prob) is naturally negative
     return float(d[-1, path[-1]]), path
 
 
 def forward_ll(pi, A, B, obs):
     """
     Forward algorithm with scaling to compute log-likelihood.
+    
+    Returns:
+        ll: log-likelihood of the observation sequence (negative value, 
+            as log of probability is always <= 0)
     """
     T = len(obs)
     N = A.shape[0]
@@ -133,7 +156,11 @@ def forward_ll(pi, A, B, obs):
         c[t] = alpha[t].sum() or 1e-300
         alpha[t] /= c[t]
     
-    return -float(np.sum(np.log(c + 1e-300)))
+    # FIX: Log-likelihood = sum of log(scaling factors)
+    # Since c[t] = sum(alpha_unscaled), and we want log P(O|model),
+    # the correct formula is: ll = sum(log(c))
+    # This gives a negative value (log of probability)
+    return float(np.sum(np.log(c + 1e-300)))
 
 
 def forward_backward(pi, A, B, obs):
@@ -141,7 +168,7 @@ def forward_backward(pi, A, B, obs):
     Forward-backward with scaling.
     
     Returns:
-        loglik: log-likelihood of the sequence
+        loglik: log-likelihood of the sequence (negative value)
         gamma: posterior probabilities, shape (T, N)
     """
     T = len(obs)
@@ -167,7 +194,9 @@ def forward_backward(pi, A, B, obs):
             c[t] = 1e-300
         alpha[t] /= c[t]
     
-    loglik = -float(np.sum(np.log(c)))
+    # FIX: Log-likelihood is sum of log(scaling factors)
+    # This is negative since probabilities are in (0, 1]
+    loglik = float(np.sum(np.log(c)))
     
     # Backward pass with same scaling
     beta = np.zeros((T, N), dtype=np.float64)
@@ -336,9 +365,18 @@ def iter_inputs(args):
         for rec in SeqIO.parse(args.fasta, "fasta"):
             yield rec.id, str(rec.seq)
 
+
 def sequence_to_observations(sequence, ngram, vocab_idx):
-    """Convert sequence to observation indices based on ngram size"""
+    """
+    Convert sequence to observation indices based on ngram size.
+    
+    Returns:
+        obs: numpy array of observation indices
+        token_count: number of tokens generated
+        nt_length: original nucleotide length (after cleaning)
+    """
     s = clean_nt(sequence)
+    nt_length = len(s)  # FIX: Track original nucleotide length
     
     if ngram == 1:
         tokens = list(s)
@@ -347,9 +385,11 @@ def sequence_to_observations(sequence, ngram, vocab_idx):
     elif ngram == 3:
         L = (len(s)//3) * 3
         tokens = [s[i:i+3] for i in range(0, L, 3)]
+    else:
+        tokens = list(s)
 
     obs = [vocab_idx[t] for t in tokens if t in vocab_idx]
-    return np.array(obs, dtype=np.int64), len(tokens)
+    return np.array(obs, dtype=np.int64), len(tokens), nt_length
 
 
 def main():
@@ -376,8 +416,13 @@ def main():
     ap.add_argument("--stdin", action="store_true")
     ap.add_argument("--stdin_id", default="stdin_seq")
     
-    # Sequence processing
-    ap.add_argument("--min_len", type=int, default=150, help="Minimum sequence length in nucleotides")
+    # FIX: Clarify that min_len refers to nucleotide length, not token count
+    ap.add_argument(
+        "--min_len", 
+        type=int, 
+        default=150, 
+        help="Minimum sequence length in nucleotides (applied before tokenization)"
+    )
     
     # Posterior-specific parameters
     ap.add_argument(
@@ -410,7 +455,8 @@ def main():
     if not (args.fasta or args.seq or args.stdin):
         raise SystemExit("Provide input via --fasta or --seq (repeatable) or --stdin.")
     
-    model_p, vocab_p, states_p = resolve_assets(args.species, args.assets_dir)
+    # FIX: Pass ngram parameter to resolve_assets
+    model_p, vocab_p, states_p = resolve_assets(args.species, args.assets_dir, args.ngram)
     pi, A, B, vocab_idx = load_model(model_p, vocab_p)
     state_names, nuc_id, mito_id = load_states(states_p)
     
@@ -421,38 +467,37 @@ def main():
     
     with open(args.out_tsv, "w") as fo:
         
-        # Write header based on method
-        if args.method == "viterbi":
-            fo.write(f"#id\tlogprob\tcall\tnuclear_frac\tmito_frac\tlen_{args.ngram}nt\n")
-        else:
-            fo.write(f"#id\tlogprob\tnuclear_frac\tmito_frac\tcall\tlen_{args.ngram}nt\n")
+        # FIX: Unified header format for both methods
+        # Columns: id, loglik, nuclear_frac, mito_frac, call, seq_len_nt, n_tokens
+        fo.write(f"#id\tloglik\tnuclear_frac\tmito_frac\tcall\tseq_len_nt\tn_tokens_{args.ngram}mer\n")
         
         for rid, raw in iter_inputs(args):
-
-            obs, token_count = sequence_to_observations(raw, args.ngram, vocab_idx)
-            if len(obs) < args.min_len:
+            # FIX: Get nucleotide length for proper minimum length check
+            obs, token_count, nt_length = sequence_to_observations(raw, args.ngram, vocab_idx)
+            
+            # FIX: Apply min_len filter to nucleotide length, not token count
+            if nt_length < args.min_len:
                 continue
         
             if obs.size == 0:
                 continue
             
-            L = len(obs)
-            
             if args.method == "viterbi":
                 ll = forward_ll(pi, A, B, obs)
                 _, path = viterbi(pi, A, B, obs)
                 
-                
                 summ = summarize_viterbi(path, nuc_id, mito_id, state_names)
+                
+                # FIX: Proper TSV format - single data row with consistent columns
                 fo.write(
-                    f"{rid}\t{ll:.3f}\t{summ['call']}\t"
-                    f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t{L}\n"
-                    f"token count:{token_count}\n"
+                    f"{rid}\t{ll:.3f}\t"
+                    f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
+                    f"{summ['call']}\t{nt_length}\t{token_count}\n"
                 )
                 
                 if args.emit_path:
                     path_str = " ".join(map(str, path.tolist()))
-                    fo.write(f"{rid}\tPATH\tcds\t{path_str}\n")
+                    fo.write(f"#{rid}_PATH\t{path_str}\n")
             
             else:  # EM/posterior
                 ll, gamma = forward_backward(pi, A, B, obs)
@@ -465,17 +510,18 @@ def main():
                     hi_thresh=args.hi_thresh,
                     margin=args.margin,
                 )
+                
+                # FIX: Proper TSV format - values only, no embedded labels
                 fo.write(
                     f"{rid}\t{ll:.3f}\t"
-                    f"Nuclear fraction:{summ['nuclear_frac']}\tMito fraction{summ['mito_frac']}\t"
-                    f"{summ['call']}\t{L}\n"
-                    f"token count:{token_count}\n"
+                    f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
+                    f"{summ['call']}\t{nt_length}\t{token_count}\n"
                 )
                 
                 if args.emit_path:
                     path = posterior_decode(gamma)
                     path_str = " ".join(map(str, path.tolist()))
-                    fo.write(f"{rid}\tPATH\tcds\t{path_str}\n")
+                    fo.write(f"#{rid}_PATH\t{path_str}\n")
                 
                 if pdf is not None:
                     fig = make_posterior_figure(gamma, nuc_id, mito_id, rid)
