@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # Unified feature generator for HMM project:
-# Supports: 1-nt, 2-nt, 3-nt (non-overlap), ORF-codons, ORF-AA
+# Supports: ORF-codons (3nt_orf), ORF-AA (aa)
 
 from Bio import SeqIO
-import argparse, os, re
+import argparse, os
 
 # ==============================
 # Common utilities
@@ -15,25 +15,7 @@ def clean_nt(s):
 
 
 # ==============================
-# Tokenization utilities
-# ==============================
-
-def tokenize_1nt(seq):
-    """Return list of single nucleotides."""
-    return list(seq)
-
-def tokenize_2nt(seq):
-    """Return overlapping dinucleotides."""
-    return [seq[i:i+2] for i in range(len(seq) - 1)]
-
-def tokenize_3nt(seq):
-    """Return non-overlapping triplets."""
-    L = (len(seq) // 3) * 3
-    return [seq[i:i+3] for i in range(0, L, 3)]
-
-
-# ==============================
-# ORF detection (shared)
+# ORF detection
 # ==============================
 
 def find_longest_orf_nt(seq, stop_codons):
@@ -108,22 +90,27 @@ def codons_to_aa(codons, table):
 def main():
 
     parser = argparse.ArgumentParser(
-        description="Unified token generator: 1nt, 2nt, 3nt, 3nt_orf, aa"
+        description="Unified token generator: 3nt_orf, aa"
     )
     parser.add_argument("--fasta", required=True)
     parser.add_argument("--mode", required=True,
-                        choices=["1nt", "2nt", "3nt", "3nt_orf", "aa"])
-    parser.add_argument("--genetic_code",
-                        choices=["standard", "vertebrate_mito", "auto"],
-                        default="auto")
+                        choices=["3nt_orf", "aa"])
+    parser.add_argument("--genetic_code", required=True,
+                        choices=["nuclear", "mito"],
+                        help="Genetic code table (required): 'nuclear' or 'mito'")
     parser.add_argument("--train_tsv", required=True)
     parser.add_argument("--holdout_tsv", required=True)
     parser.add_argument("--train_frac", type=float, default=0.7)
 
     args = parser.parse_args()
 
-    # Set translation table
-    table = STD_CODON_TO_AA if args.genetic_code == "standard" else MITO_CODON_TO_AA
+    # Set translation table and stop codons based on genetic code
+    if args.genetic_code == "nuclear":
+        table = STD_CODON_TO_AA
+        stops = {"TAA", "TAG", "TGA"}
+    else:  # mito
+        table = MITO_CODON_TO_AA
+        stops = {"TAA", "TAG", "AGA", "AGG"}
 
     results = []
 
@@ -134,57 +121,24 @@ def main():
         if not seq:
             continue
 
-        # -----------------------
-        # Modes
-        # -----------------------
+        # Find longest ORF
+        nt_orf = find_longest_orf_nt(seq, stops)
+        if not nt_orf:
+            continue
 
-        if args.mode == "1nt":
-            toks = tokenize_1nt(seq)
+        codons = nt_to_codons(nt_orf)
 
-        elif args.mode == "2nt":
-            toks = tokenize_2nt(seq)
-            if not toks:
+        if args.mode == "3nt_orf":
+            toks = codons
+        else:  # aa mode
+            aas = codons_to_aa(codons, table)
+            if not aas:
                 continue
-
-        elif args.mode == "3nt":
-            toks = tokenize_3nt(seq)
-            if not toks:
-                continue
-
-        elif args.mode in ("3nt_orf", "aa"):
-            # Determine stop codons
-            if args.genetic_code == "standard":
-                stops = {"TAA", "TAG", "TGA"}
-            elif args.genetic_code == "vertebrate_mito":
-                stops = {"TAA", "TAG", "AGA", "AGG"}
-            else:  # auto: try mito first
-                stops = {"TAA", "TAG", "AGA", "AGG"}
-
-            nt_orf = find_longest_orf_nt(rec.seq, stops)
-
-            if not nt_orf and args.genetic_code == "auto":
-                nt_orf = find_longest_orf_nt(rec.seq, {"TAA","TAG","TGA"})
-
-            if not nt_orf:
-                continue
-
-            codons = nt_to_codons(nt_orf)
-            if args.mode == "3nt_orf":
-                toks = codons
-
-            else:  # AA mode
-                aas = codons_to_aa(codons, table)
-                if not aas:
-                    continue
-                toks = aas
-
-        else:
-            raise ValueError("Unknown mode")
+            toks = aas
 
         # Build line
         line = tid + "\t" + " ".join(toks)
         results.append(line)
-
 
     # ==============================
     # Split train/holdout
@@ -211,10 +165,9 @@ def main():
         for line in hold_lines:
             f.write(line + "\n")
 
-    print(f"[OK] mode={args.mode}, total={total}, train={len(train_lines)}, holdout={len(hold_lines)}")
+    print(f"[OK] mode={args.mode}, genetic_code={args.genetic_code}, total={total}, train={len(train_lines)}, holdout={len(hold_lines)}")
     print(f"train -> {args.train_tsv}")
     print(f"holdout -> {args.holdout_tsv}")
-
 
 if __name__ == "__main__":
     main()

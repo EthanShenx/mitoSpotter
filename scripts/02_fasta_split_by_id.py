@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-Unified script for splitting FASTA (cDNA or CDS) by transcript IDs.
-Modes:
-  --mode cds   → process CDS FASTA
-  --mode cdna  → process cDNA FASTA
-"""
 
 from Bio import SeqIO
 import argparse, os, sys
@@ -20,6 +14,11 @@ def main():
     ap.add_argument("--outdir", required=True, help="Directory to write output files.")
     ap.add_argument("--mode", required=True, choices=["cdna","cds"],
                     help="Specify whether input FASTA is cDNA or CDS.")
+    ap.add_argument(
+        "--prefix",
+        default="",
+        help="Prefix for all output filenames (default: none)."
+    )
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -27,13 +26,16 @@ def main():
     mito_ids = load_ids(args.mito_ids)
     nuc_ids  = load_ids(args.nuc_ids)
 
-    # Output filenames depend on mode
+    # Output filenames depend on mode, plus optional prefix
     if args.mode == "cdna":
-        mito_out = os.path.join(args.outdir, "mito_cdna.fa")
-        nuc_out  = os.path.join(args.outdir, "nuclear_cdna.fa")
+        mito_name = args.prefix + "mito_cdna.fa"
+        nuc_name  = args.prefix + "nuclear_cdna.fa"
     else:  # cds
-        mito_out = os.path.join(args.outdir, "mito_cds.fa")
-        nuc_out  = os.path.join(args.outdir, "nuclear_cds.fa")
+        mito_name = args.prefix + "mito_cds.fa"
+        nuc_name  = args.prefix + "nuclear_cds.fa"
+
+    mito_out = os.path.join(args.outdir, mito_name)
+    nuc_out  = os.path.join(args.outdir, nuc_name)
 
     fm = open(mito_out, "w")
     fn = open(nuc_out, "w")

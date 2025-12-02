@@ -7,6 +7,8 @@ import json
 import os.path as op
 import re
 import sys
+import time
+from datetime import datetime
 import numpy as np
 from Bio import SeqIO
 
@@ -17,34 +19,135 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 matplotlib.rcParams["font.family"] = "Arial"
 
+# Optional memory tracking - only used when explicitly requested
+try:
+    import tracemalloc
+    TRACEMALLOC_AVAILABLE = True
+except ImportError:
+    TRACEMALLOC_AVAILABLE = False
+
 # Nucleotide vocabulary
 BASES = ["A", "C", "G", "T"]
-IDX = {b: i for i, b in enumerate(BASES)}
 
+
+# -------------------- Timing and Memory Utilities -------------------- #
+
+def format_timestamp(ts):
+    """Format a timestamp as a human-readable string."""
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_duration(seconds):
+    """Format duration in seconds to a human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.2f} seconds"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        secs = seconds % 60
+        return f"{int(minutes)} min {secs:.2f} sec"
+    else:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{int(hours)} hr {int(minutes)} min {secs:.2f} sec"
+
+
+def format_memory(bytes_value):
+    """Format memory size in bytes to a human-readable string."""
+    if bytes_value < 1024:
+        return f"{bytes_value} B"
+    elif bytes_value < 1024 ** 2:
+        return f"{bytes_value / 1024:.2f} KB"
+    elif bytes_value < 1024 ** 3:
+        return f"{bytes_value / (1024 ** 2):.2f} MB"
+    else:
+        return f"{bytes_value / (1024 ** 3):.2f} GB"
+
+
+def report_timing(start_time, end_time):
+    """Print timing report to stderr."""
+    duration = end_time - start_time
+    print("\n" + "=" * 60, file=sys.stderr)
+    print("TIMING REPORT", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    print(f"  Start time : {format_timestamp(start_time)}", file=sys.stderr)
+    print(f"  End time   : {format_timestamp(end_time)}", file=sys.stderr)
+    print(f"  Total time : {format_duration(duration)}", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+
+
+def report_memory(peak_memory):
+    """Print memory report to stderr."""
+    print("\n" + "-" * 60, file=sys.stderr)
+    print("MEMORY REPORT", file=sys.stderr)
+    print("-" * 60, file=sys.stderr)
+    print(f"  Peak memory usage : {format_memory(peak_memory)}", file=sys.stderr)
+    print("-" * 60, file=sys.stderr)
+
+
+# -------------------- Sequence Processing -------------------- #
 
 def clean_nt(s):
     """Clean nucleotide string: uppercase, replace U->T, keep only A/C/G/T."""
     return re.sub(r"[^ACGT]", "", str(s).upper().replace("U", "T"))
 
 
-def resolve_assets(species, assets_dir):
-    """Resolve model/vocab/state files for a given species."""
-    model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_1nt.json")
-    vocab = op.join(assets_dir, f"{species}_nt_vocab.json")
-    states = op.join(assets_dir, f"{species}_state_names.json")
+def resolve_assets(species, assets_dir, ngram):
+    """
+    Resolve model/vocab/state files for a given species.
+    
+    Args:
+        species: Species identifier (e.g., 'hs', 'mm', 'rn')
+        assets_dir: Directory containing model assets
+        ngram: N-gram size (1, 2, or 3) for selecting appropriate vocab file
+    
+    Returns:
+        Tuple of (model_path, vocab_path, states_path)
+    """
+    # Try ngram-specific model first, then fallback to 1nt model
+    model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_{ngram}nt.json")
+    if not op.exists(model):
+        model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_1nt.json")
+    
+    # Vocabulary file candidates - ngram-specific first, then generic
+    vocab_candidates = [
+        op.join(assets_dir, f"{species}_nt{ngram}_vocab.json"),
+        op.join(assets_dir, f"{species}_nt_vocab.json"),
+    ]
+    vocab = next((p for p in vocab_candidates if op.exists(p)), None)
+    
+    # State file candidates  
+    states_candidates = [
+        op.join(assets_dir, f"{species}_nt_state_names.json"),
+        op.join(assets_dir, f"{species}_state_names.json"),
+    ]
+    states = next((p for p in states_candidates if op.exists(p)), None)
+    
     for p in (model, vocab, states):
-        if not op.exists(p):
+        if not p or not op.exists(p):
             raise SystemExit(f"Missing asset: {p}")
     return model, vocab, states
 
 
-def load_model(model_json):
+def load_model(model_json, vocab_json):
     """Load HMM parameters pi, A, B from JSON."""
     M = json.load(open(model_json))
     pi = np.array(M["startprob"], dtype=np.float64)
     A = np.array(M["transmat"], dtype=np.float64)
     B = np.array(M["emissionprob"], dtype=np.float64)
-    return pi, A, B
+    
+    # Load vocabulary mapping
+    vocab_data = json.load(open(vocab_json))
+    if "bases" in vocab_data:  # 1-nt model
+        idx = {b: i for i, b in enumerate(vocab_data["bases"])}
+    elif "dinucs" in vocab_data:  # 2-nt model
+        idx = {d: i for i, d in enumerate(vocab_data["dinucs"])}
+    elif "trinucs" in vocab_data:  # 3-nt model
+        idx = {t: i for i, t in enumerate(vocab_data["trinucs"])}
+    else:  # Fallback
+        idx = vocab_data.get("index", {})
+
+    return pi, A, B, idx
 
 
 def load_states(p):
@@ -56,6 +159,8 @@ def load_states(p):
     mito_id = inv.get("mitochondrial", 1)
     return S, nuc_id, mito_id
 
+
+# -------------------- HMM Algorithms -------------------- #
 
 def viterbi(pi, A, B, obs):
     """
@@ -94,6 +199,9 @@ def viterbi(pi, A, B, obs):
 def forward_ll(pi, A, B, obs):
     """
     Forward algorithm with scaling to compute log-likelihood.
+    
+    Returns:
+        ll: log-likelihood of the observation sequence
     """
     T = len(obs)
     N = A.shape[0]
@@ -110,7 +218,7 @@ def forward_ll(pi, A, B, obs):
         c[t] = alpha[t].sum() or 1e-300
         alpha[t] /= c[t]
     
-    return -float(np.sum(np.log(c + 1e-300)))
+    return float(np.sum(np.log(c + 1e-300)))
 
 
 def forward_backward(pi, A, B, obs):
@@ -144,7 +252,7 @@ def forward_backward(pi, A, B, obs):
             c[t] = 1e-300
         alpha[t] /= c[t]
     
-    loglik = -float(np.sum(np.log(c)))
+    loglik = float(np.sum(np.log(c)))
     
     # Backward pass with same scaling
     beta = np.zeros((T, N), dtype=np.float64)
@@ -169,6 +277,8 @@ def posterior_decode(gamma):
         return np.zeros(0, dtype=np.int64)
     return np.argmax(gamma, axis=1).astype(np.int64)
 
+
+# -------------------- Summary Functions -------------------- #
 
 def summarize_viterbi(path, nuc_id=0, mito_id=1, state_names=None):
     """
@@ -220,15 +330,12 @@ def summarize_posterior(
     mito_frac = float(gamma[:, mito_id].mean())
     
     call_label = "ambiguous"
-    call_id = None
     
     # High-confidence mitochondrial
     if (mito_frac >= hi_thresh) and (mito_frac - nuc_frac >= margin):
-        call_id = mito_id
         call_label = "mitochondrial"
     # High-confidence nuclear
     elif (nuc_frac >= hi_thresh) and (nuc_frac - mito_frac >= margin):
-        call_id = nuc_id
         call_label = "nuclear"
     
     return {
@@ -237,6 +344,8 @@ def summarize_posterior(
         "call": call_label,
     }
 
+
+# -------------------- Visualization -------------------- #
 
 def make_posterior_figure(gamma, nuc_id, mito_id, seq_id):
     """
@@ -296,6 +405,8 @@ def make_posterior_figure(gamma, nuc_id, mito_id, seq_id):
     return fig
 
 
+# -------------------- Input Iteration -------------------- #
+
 def iter_inputs(args):
     """Iterate over all input sequences based on CLI options."""
     if args.seq:
@@ -317,6 +428,34 @@ def iter_inputs(args):
             yield rec.id, str(rec.seq)
 
 
+def sequence_to_observations(sequence, ngram, vocab_idx):
+    """
+    Convert sequence to observation indices based on ngram size.
+    
+    Returns:
+        obs: numpy array of observation indices
+        token_count: number of tokens generated
+        nt_length: original nucleotide length (after cleaning)
+    """
+    s = clean_nt(sequence)
+    nt_length = len(s)
+    
+    if ngram == 1:
+        tokens = list(s)
+    elif ngram == 2:
+        tokens = [s[i:i+2] for i in range(len(s)-1)]
+    elif ngram == 3:
+        L = (len(s)//3) * 3
+        tokens = [s[i:i+3] for i in range(0, L, 3)]
+    else:
+        tokens = list(s)
+
+    obs = [vocab_idx[t] for t in tokens if t in vocab_idx]
+    return np.array(obs, dtype=np.int64), len(tokens), nt_length
+
+
+# -------------------- Main -------------------- #
+
 def main():
     ap = argparse.ArgumentParser(
         description=(
@@ -329,11 +468,10 @@ def main():
     ap.add_argument(
         "--method",
         choices=["viterbi", "em"],
-        required=True,
-        help="Decoding method: 'viterbi' for Viterbi, 'em' for posterior (forward-backward)"
-    )
+        required=True)
     ap.add_argument("--species", choices=["hs", "mm", "rn"], required=True)
     ap.add_argument("--assets_dir", default="out")
+    ap.add_argument("--ngram", type=int, choices=[1,2,3], default=1)
     
     # Input options
     ap.add_argument("--fasta")
@@ -343,7 +481,12 @@ def main():
     ap.add_argument("--stdin_id", default="stdin_seq")
     
     # Sequence processing
-    ap.add_argument("--min_len", type=int, default=150, help="Minimum sequence length in nucleotides")
+    ap.add_argument(
+        "--min_len", 
+        type=int, 
+        default=150, 
+        help="Minimum sequence length in nucleotides (applied before tokenization)"
+    )
     
     # Posterior-specific parameters
     ap.add_argument(
@@ -371,13 +514,34 @@ def main():
         help="[EM only] Write PDF with per-position N/M posterior probabilities."
     )
     
+    # Memory tracking option - only enabled when explicitly set
+    ap.add_argument(
+        "--track_memory",
+        action="store_true",
+        help="Enable memory tracking and report peak memory usage after decoding. "
+             "Requires tracemalloc module (included in Python standard library)."
+    )
+    
     args = ap.parse_args()
     
     if not (args.fasta or args.seq or args.stdin):
         raise SystemExit("Provide input via --fasta or --seq (repeatable) or --stdin.")
     
-    model_p, _, states_p = resolve_assets(args.species, args.assets_dir)
-    pi, A, B = load_model(model_p)
+    # -------------------- Start timing -------------------- #
+    start_time = time.time()
+    
+    # -------------------- Start memory tracking if requested -------------------- #
+    if args.track_memory:
+        if TRACEMALLOC_AVAILABLE:
+            tracemalloc.start()
+            print("[INFO] Memory tracking enabled.", file=sys.stderr)
+        else:
+            print("[WARNING] tracemalloc not available. Memory tracking disabled.", file=sys.stderr)
+            args.track_memory = False
+    
+    # Load model and assets
+    model_p, vocab_p, states_p = resolve_assets(args.species, args.assets_dir, args.ngram)
+    pi, A, B, vocab_idx = load_model(model_p, vocab_p)
     state_names, nuc_id, mito_id = load_states(states_p)
     
     # Prepare optional PDF writer (EM only)
@@ -385,37 +549,44 @@ def main():
     if args.method == "em" and args.out_pdf:
         pdf = PdfPages(args.out_pdf)
     
+    # Track processing statistics
+    n_processed = 0
+    n_skipped = 0
+    
     with open(args.out_tsv, "w") as fo:
-        # Write header based on method
-        if args.method == "viterbi":
-            fo.write("#id\tlogprob\tcall\tnuclear_frac\tmito_frac\tlen_nt\n")
-        else:
-            fo.write("#id\tlogprob\tnuclear_frac\tmito_frac\tcall\tlen_nt\n")
+        
+        # Unified header format for both methods
+        fo.write(f"#id\tloglik\tnuclear_frac\tmito_frac\tcall\tseq_len_nt\tn_tokens_{args.ngram}mer\n")
         
         for rid, raw in iter_inputs(args):
-            # Use full cleaned sequence
-            s = clean_nt(raw)
-            if len(s) < args.min_len:
+            obs, token_count, nt_length = sequence_to_observations(raw, args.ngram, vocab_idx)
+            
+            # Apply min_len filter to nucleotide length
+            if nt_length < args.min_len:
+                n_skipped += 1
                 continue
-            obs = np.array([IDX[c] for c in s if c in IDX], dtype=np.int64)
+        
             if obs.size == 0:
+                n_skipped += 1
                 continue
             
-            L = len(obs)
+            n_processed += 1
             
             if args.method == "viterbi":
                 ll = forward_ll(pi, A, B, obs)
-                vll, path = viterbi(pi, A, B, obs)
+                _, path = viterbi(pi, A, B, obs)
                 
                 summ = summarize_viterbi(path, nuc_id, mito_id, state_names)
+                
                 fo.write(
-                    f"{rid}\t{ll:.3f}\t{summ['call']}\t"
-                    f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t{L}\n"
+                    f"{rid}\t{ll:.3f}\t"
+                    f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
+                    f"{summ['call']}\t{nt_length}\t{token_count}\n"
                 )
                 
                 if args.emit_path:
                     path_str = " ".join(map(str, path.tolist()))
-                    fo.write(f"{rid}\tPATH\tcds\t{path_str}\n")
+                    fo.write(f"#{rid}_PATH\t{path_str}\n")
             
             else:  # EM/posterior
                 ll, gamma = forward_backward(pi, A, B, obs)
@@ -428,16 +599,17 @@ def main():
                     hi_thresh=args.hi_thresh,
                     margin=args.margin,
                 )
+                
                 fo.write(
                     f"{rid}\t{ll:.3f}\t"
                     f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
-                    f"{summ['call']}\t{L}\n"
+                    f"{summ['call']}\t{nt_length}\t{token_count}\n"
                 )
                 
                 if args.emit_path:
                     path = posterior_decode(gamma)
                     path_str = " ".join(map(str, path.tolist()))
-                    fo.write(f"{rid}\tPATH\tcds\t{path_str}\n")
+                    fo.write(f"#{rid}_PATH\t{path_str}\n")
                 
                 if pdf is not None:
                     fig = make_posterior_figure(gamma, nuc_id, mito_id, rid)
@@ -447,9 +619,23 @@ def main():
     if pdf is not None:
         pdf.close()
     
+    # -------------------- End timing -------------------- #
+    end_time = time.time()
+    
+    # Print summary
     print(f"[OK] {args.method} decode -> {args.out_tsv}")
+    print(f"[OK] Processed: {n_processed} sequences, Skipped: {n_skipped} sequences")
     if args.method == "em" and args.out_pdf:
         print(f"[OK] PDF visualization -> {args.out_pdf}")
+    
+    # -------------------- Report memory usage if tracking was enabled -------------------- #
+    if args.track_memory:
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        report_memory(peak)
+    
+    # -------------------- Always report timing -------------------- #
+    report_timing(start_time, end_time)
 
 
 if __name__ == "__main__":

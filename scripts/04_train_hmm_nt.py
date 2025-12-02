@@ -13,33 +13,148 @@
 #     --train_method em \
 #     --out_model_json model_1nt.json
 
-print("""
+# -------------------- Loading Animation -------------------- #
+import sys
+import threading
+import time as _time
 
+class LoadingSpinner:
+    """A simple loading spinner animation using only standard library."""
+    
+    def __init__(self, message="Training initiating"):
+        self.message = message
+        self.spinning = False
+        self.thread = None
+        self.frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self.ascii_frames = ["|", "/", "-", "\\"]
+    
+    def _spin(self):
+        """Internal spinning loop."""
+        idx = 0
+        try:
+            sys.stderr.write(self.frames[0])
+            sys.stderr.flush()
+            frames = self.frames
+        except (UnicodeEncodeError, UnicodeError):
+            frames = self.ascii_frames
+        
+        while self.spinning:
+            frame = frames[idx % len(frames)]
+            sys.stderr.write(f"\r{self.message}... {frame} ")
+            sys.stderr.flush()
+            _time.sleep(0.1)
+            idx += 1
+    
+    def start(self):
+        """Start the spinner."""
+        self.spinning = True
+        self.thread = threading.Thread(target=self._spin, daemon=True)
+        self.thread.start()
+    
+    def stop(self, final_message=None):
+        """Stop the spinner and optionally print a final message."""
+        self.spinning = False
+        if self.thread:
+            self.thread.join(timeout=0.5)
+        sys.stderr.write("\r" + " " * (len(self.message) + 10) + "\r")
+        sys.stderr.flush()
+        if final_message:
+            print(final_message, file=sys.stderr)
+
+# Only show banner and spinner in the main process
+if __name__ == "__main__":
+    print("""
 ┏┏ ┛━┏┛┏━┃┏━┛┏━┃┏━┃━┏┛━┏┛┏━┛┏━┃
 ┃┃┃┃ ┃ ┃ ┃━━┃┏━┛┃ ┃ ┃  ┃ ┏━┛┏┏┛
 ┛┛┛┛ ┛ ━━┛━━┛┛  ━━┛ ┛  ┛ ━━┛┛ ┛
-
-
 """)
-    
-print("Initiating...")
+    spinner = LoadingSpinner("Training initiating")
+    spinner.start()
 
+# -------------------- Import Phase -------------------- #
 import argparse
 import json
 import os
-import sys
+import time
+from datetime import datetime
 import numpy as np
 
-# Graceful fallback if tqdm is missing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
+
+try:
+    import tracemalloc
+    TRACEMALLOC_AVAILABLE = True
+except ImportError:
+    TRACEMALLOC_AVAILABLE = False
+
 try:
     from tqdm import tqdm
-except Exception:  # pragma: no cover
+except Exception:
     def tqdm(x, **k):
         return x
 
+# Stop spinner only in main process
+if __name__ == "__main__":
+    spinner.stop("Training initiating... done!")
 
 NUC, MITO = 0, 1
 VOCAB = ["A", "C", "G", "T"]
+
+# -------------------- Timing and Memory Utilities -------------------- #
+
+def format_timestamp(ts):
+    """Format a timestamp as a human-readable string."""
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_duration(seconds):
+    """Format duration in seconds to a human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.2f} seconds"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        secs = seconds % 60
+        return f"{int(minutes)} min {secs:.2f} sec"
+    else:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{int(hours)} hr {int(minutes)} min {secs:.2f} sec"
+
+
+def format_memory(bytes_value):
+    """Format memory size in bytes to a human-readable string."""
+    if bytes_value < 1024:
+        return f"{bytes_value} B"
+    elif bytes_value < 1024 ** 2:
+        return f"{bytes_value / 1024:.2f} KB"
+    elif bytes_value < 1024 ** 3:
+        return f"{bytes_value / (1024 ** 2):.2f} MB"
+    else:
+        return f"{bytes_value / (1024 ** 3):.2f} GB"
+
+
+def report_timing(start_time, end_time):
+    """Print timing report to stderr."""
+    duration = end_time - start_time
+    print("\n" + "=" * 60, file=sys.stderr)
+    print("TIMING REPORT", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    print(f"  Start time : {format_timestamp(start_time)}", file=sys.stderr)
+    print(f"  End time   : {format_timestamp(end_time)}", file=sys.stderr)
+    print(f"  Total time : {format_duration(duration)}", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+
+
+def report_memory(peak_memory):
+    """Print memory report to stderr."""
+    print("\n" + "-" * 60, file=sys.stderr)
+    print("MEMORY REPORT", file=sys.stderr)
+    print("-" * 60, file=sys.stderr)
+    print(f"  Peak memory usage : {format_memory(peak_memory)}", file=sys.stderr)
+    print("-" * 60, file=sys.stderr)
+
 
 # -------------------- Data loading & helpers -------------------- #
 
@@ -49,17 +164,15 @@ def setup_vocab(ngram):
         IDX = {b:i for i,b in enumerate(VOCAB)}
         return VOCAB, IDX, "base_order"
     elif ngram == 2:
-        VOCAB = [a+b for a in VOCAB for b in VOCAB]  # AA, AC, ..., TT
-        IDX = {d:i for i,d in enumerate(VOCAB)}
-        return VOCAB, IDX, "dinuc_order"
+        VOCAB_NG = [a+b for a in VOCAB for b in VOCAB]  # AA, AC, ..., TT
+        IDX = {d:i for i,d in enumerate(VOCAB_NG)}
+        return VOCAB_NG, IDX, "dinuc_order"
     elif ngram == 3:
-        VOCAB = [a+b+c for a in VOCAB for b in VOCAB for c in VOCAB]  # AAA, AAC, ..., TTT
-        IDX = {t:i for i,t in enumerate(VOCAB)}
-        return VOCAB, IDX, "trinuc_order"
+        VOCAB_NG = [a+b+c for a in VOCAB for b in VOCAB for c in VOCAB]  # AAA, AAC, ..., TTT
+        IDX = {t:i for i,t in enumerate(VOCAB_NG)}
+        return VOCAB_NG, IDX, "trinuc_order"
     else:
         raise ValueError(f"Unsupported ngram size: {ngram}")
-
-
 
 
 def read_nt_tsv(p, IDX):
@@ -144,8 +257,59 @@ def forward_backward_scaled(pi, A, B, obs):
             B[:, obs[t + 1]] * beta[t + 1]
         )[None, :] / denom
 
-    ll = -np.sum(np.log(c + 1e-300))
+    ll = np.sum(np.log(c + 1e-300))
     return gamma, xi, ll
+
+
+# -------------------- Parallel Processing Helpers -------------------- #
+
+def _process_sequence_em(args):
+    """
+    Worker function for parallel EM processing.
+    Processes a single sequence and returns accumulated statistics.
+    """
+    obs, pi, A, B = args
+    N, M = B.shape
+    
+    gamma, xi, ll = forward_backward_scaled(pi, A, B, obs)
+    
+    # Accumulate statistics for this sequence
+    pi_num = gamma[0].copy()
+    A_num = xi.sum(0)
+    A_den = gamma[:-1].sum(0)
+    
+    B_num = np.zeros((N, M))
+    B_den = np.zeros(N)
+    for t, o in enumerate(obs):
+        B_num[:, o] += gamma[t]
+        B_den += gamma[t]
+    
+    return pi_num, A_num, A_den, B_num, B_den, ll
+
+
+def _process_sequence_viterbi(args):
+    """
+    Worker function for parallel Viterbi processing.
+    Processes a single sequence and returns accumulated counts.
+    """
+    obs, pi, A, B = args
+    N, M = B.shape
+    
+    path, ll = viterbi_decode(pi, A, B, obs)
+    
+    # Accumulate counts for this sequence
+    pi_cnt = np.zeros(N)
+    pi_cnt[path[0]] = 1.0
+    
+    A_cnt = np.zeros((N, N))
+    for t in range(len(path) - 1):
+        A_cnt[path[t], path[t + 1]] += 1.0
+    
+    B_cnt = np.zeros((N, M))
+    for t, o in enumerate(obs):
+        B_cnt[path[t], o] += 1.0
+    
+    return pi_cnt, A_cnt, B_cnt, ll
 
 
 def baum_welch(
@@ -158,9 +322,10 @@ def baum_welch(
     emis_alpha=1.0,
     show_progress=True,
     tol=1e-4,
+    n_workers=1,
 ):
     """
-    Standard Baum-Welch EM (soft EM).
+    Standard Baum-Welch EM (soft EM) with optional parallel processing.
 
     seqs: list of np.ndarray(int64)
     pi, A, B: initial parameters
@@ -171,6 +336,7 @@ def baum_welch(
       "none" (not used here) -> skip EM
     emis_alpha: Laplace smoothing for emission probabilities
     tol: relative tolerance for early stopping on log-likelihood
+    n_workers: number of parallel workers (1 = sequential)
     """
     N, M = B.shape
     outer = tqdm(
@@ -179,6 +345,8 @@ def baum_welch(
         unit="iter",
         disable=not sys.stderr.isatty() or not show_progress,
     )
+    
+    use_parallel = n_workers > 1 and len(seqs) > n_workers
 
     prev_ll = None
     for it in outer:
@@ -189,25 +357,52 @@ def baum_welch(
         B_den = np.full(N, emis_alpha * M)
         tot_ll = 0.0
 
-        inner = tqdm(
-            seqs,
-            desc=f"iter {it+1}/{n_iter}",
-            unit="seq",
-            leave=False,
-            disable=not sys.stderr.isatty() or not show_progress,
-        )
+        if use_parallel:
+            # Parallel processing
+            args_list = [(obs, pi, A, B) for obs in seqs]
+            
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                futures = {executor.submit(_process_sequence_em, args): i 
+                          for i, args in enumerate(args_list)}
+                
+                inner = tqdm(
+                    as_completed(futures),
+                    total=len(seqs),
+                    desc=f"iter {it+1}/{n_iter}",
+                    unit="seq",
+                    leave=False,
+                    disable=not sys.stderr.isatty() or not show_progress,
+                )
+                
+                for future in inner:
+                    p_pi, p_A, p_A_den, p_B, p_B_den, ll = future.result()
+                    pi_num += p_pi
+                    A_num += p_A
+                    A_den += p_A_den
+                    B_num += p_B
+                    B_den += p_B_den
+                    tot_ll += ll
+        else:
+            # Sequential processing (original behavior)
+            inner = tqdm(
+                seqs,
+                desc=f"iter {it+1}/{n_iter}",
+                unit="seq",
+                leave=False,
+                disable=not sys.stderr.isatty() or not show_progress,
+            )
 
-        for obs in inner:
-            gamma, xi, ll = forward_backward_scaled(pi, A, B, obs)
-            tot_ll += ll
+            for obs in inner:
+                gamma, xi, ll = forward_backward_scaled(pi, A, B, obs)
+                tot_ll += ll
 
-            pi_num += gamma[0]
-            A_num += xi.sum(0)
-            A_den += gamma[:-1].sum(0)
+                pi_num += gamma[0]
+                A_num += xi.sum(0)
+                A_den += gamma[:-1].sum(0)
 
-            for t, o in enumerate(obs):
-                B_num[:, o] += gamma[t]
-                B_den += gamma[t]
+                for t, o in enumerate(obs):
+                    B_num[:, o] += gamma[t]
+                    B_den += gamma[t]
 
         # normalize
         pi = pi_num / (pi_num.sum() or 1e-300)
@@ -289,15 +484,17 @@ def viterbi_train(
     trans_alpha=1.0,
     show_progress=True,
     tol=1e-4,
+    n_workers=1,
 ):
     """
-    Viterbi training (hard EM).
+    Viterbi training (hard EM) with optional parallel processing.
 
     seqs: list of np.ndarray(int64)
     pi, A, B: initial parameters
     emis_alpha: Laplace smoothing for emission counts
     trans_alpha: Laplace smoothing for transition counts
     tol: relative tolerance for early stopping on joint log-likelihood
+    n_workers: number of parallel workers (1 = sequential)
     """
     N, M = B.shape
     outer = tqdm(
@@ -306,6 +503,8 @@ def viterbi_train(
         unit="iter",
         disable=not sys.stderr.isatty() or not show_progress,
     )
+    
+    use_parallel = n_workers > 1 and len(seqs) > n_workers
 
     prev_ll = None
     for it in outer:
@@ -315,28 +514,53 @@ def viterbi_train(
 
         tot_ll = 0.0
 
-        inner = tqdm(
-            seqs,
-            desc=f"iter {it+1}/{n_iter}",
-            unit="seq",
-            leave=False,
-            disable=not sys.stderr.isatty() or not show_progress,
-        )
+        if use_parallel:
+            # Parallel processing
+            args_list = [(obs, pi, A, B) for obs in seqs]
+            
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                futures = {executor.submit(_process_sequence_viterbi, args): i 
+                          for i, args in enumerate(args_list)}
+                
+                inner = tqdm(
+                    as_completed(futures),
+                    total=len(seqs),
+                    desc=f"iter {it+1}/{n_iter}",
+                    unit="seq",
+                    leave=False,
+                    disable=not sys.stderr.isatty() or not show_progress,
+                )
+                
+                for future in inner:
+                    p_pi, p_A, p_B, ll = future.result()
+                    pi_cnt += p_pi
+                    A_cnt += p_A
+                    B_cnt += p_B
+                    tot_ll += ll
+        else:
+            # Sequential processing (original behavior)
+            inner = tqdm(
+                seqs,
+                desc=f"iter {it+1}/{n_iter}",
+                unit="seq",
+                leave=False,
+                disable=not sys.stderr.isatty() or not show_progress,
+            )
 
-        for obs in inner:
-            path, ll = viterbi_decode(pi, A, B, obs)
-            tot_ll += ll
+            for obs in inner:
+                path, ll = viterbi_decode(pi, A, B, obs)
+                tot_ll += ll
 
-            # initial state
-            pi_cnt[path[0]] += 1.0
+                # initial state
+                pi_cnt[path[0]] += 1.0
 
-            # transitions
-            for t in range(len(path) - 1):
-                A_cnt[path[t], path[t + 1]] += 1.0
+                # transitions
+                for t in range(len(path) - 1):
+                    A_cnt[path[t], path[t + 1]] += 1.0
 
-            # emissions
-            for t, o in enumerate(obs):
-                B_cnt[path[t], o] += 1.0
+                # emissions
+                for t, o in enumerate(obs):
+                    B_cnt[path[t], o] += 1.0
 
         # normalize
         pi = pi_cnt / (pi_cnt.sum() + 1e-300)
@@ -383,19 +607,66 @@ def main():
     parser.add_argument("--self_loop", type=float, default=0.995)
     parser.add_argument("--emis_smooth", type=float, default=1.0)
 
+    # Memory tracking option - only enabled when explicitly set
+    parser.add_argument(
+        "--track_memory",
+        action="store_true",
+        help="Enable memory tracking and report peak memory usage after training. "
+             "Requires tracemalloc module (included in Python standard library)."
+    )
+    
+    # Parallel processing option (similar to R's future package)
+    parser.add_argument(
+        "--n_workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers for training. "
+             "Set to number of CPU cores for maximum parallelism. "
+             "Use 1 for sequential processing (default). "
+             "Similar to R's future::plan(multisession, workers=N)."
+    )
+
     args = parser.parse_args()
+    
+    # Determine number of workers
+    n_workers = args.n_workers
+    max_workers = multiprocessing.cpu_count()
+    
+    if n_workers < 1:
+        n_workers = 1
+    elif n_workers > max_workers:
+        print(f"[WARNING] Requested {n_workers} workers but only {max_workers} CPUs available. "
+              f"Using {max_workers} workers.", file=sys.stderr)
+        n_workers = max_workers
+    
+    if n_workers > 1:
+        print(f"[INFO] Parallel processing enabled with {n_workers} workers "
+              f"(max available: {max_workers}).", file=sys.stderr)
+
+    # -------------------- Start timing -------------------- #
+    start_time = time.time()
+
+    # -------------------- Start memory tracking if requested -------------------- #
+    if args.track_memory:
+        if TRACEMALLOC_AVAILABLE:
+            tracemalloc.start()
+            print("[INFO] Memory tracking enabled.", file=sys.stderr)
+        else:
+            print("[WARNING] tracemalloc not available. Memory tracking disabled.", file=sys.stderr)
+            args.track_memory = False
 
     # Load data
-    VOCAB, IDX, order_key = setup_vocab(args.ngram)
+    VOCAB_USED, IDX, order_key = setup_vocab(args.ngram)
     nuc = read_nt_tsv(args.nuclear_nt_tsv, IDX)
     mit = read_nt_tsv(args.mito_nt_tsv, IDX)
     allseq = nuc + mit
+    
     if not allseq:
         raise SystemExit("No sequences to train.")
 
     # Initialize emissions from class frequencies
-    nuc_emit = freq_from_seqs(nuc, VOCAB, args.emis_smooth)
-    mit_emit = freq_from_seqs(mit, VOCAB, args.emis_smooth)
+    nuc_emit = freq_from_seqs(nuc, VOCAB_USED, args.emis_smooth)
+    mit_emit = freq_from_seqs(mit, VOCAB_USED, args.emis_smooth)
     B = np.vstack([nuc_emit, mit_emit]).astype(np.float64)
 
     # Initialize transitions and start distribution
@@ -421,6 +692,7 @@ def main():
                 emis_alpha=args.emis_smooth,
                 show_progress=True,
                 tol=1e-4,
+                n_workers=n_workers,
             )
         else:
             print("[INFO] EM training skipped (learn='none' or n_em_iter <= 0).")
@@ -438,6 +710,7 @@ def main():
                 trans_alpha=args.trans_smooth,
                 show_progress=True,
                 tol=1e-4,
+                n_workers=n_workers,
             )
         else:
             print("[INFO] Viterbi training skipped (n_viterbi_iter <= 0).")
@@ -455,6 +728,7 @@ def main():
                 emis_alpha=args.emis_smooth,
                 show_progress=True,
                 tol=1e-4,
+                n_workers=n_workers,
             )
         else:
             print("[INFO] EM phase skipped in hybrid (learn='none' or n_em_iter <= 0).")
@@ -470,6 +744,7 @@ def main():
                 trans_alpha=args.trans_smooth,
                 show_progress=True,
                 tol=1e-4,
+                n_workers=n_workers,
             )
         else:
             print("[INFO] Viterbi phase skipped in hybrid (n_viterbi_iter <= 0).")
@@ -482,11 +757,11 @@ def main():
     os.makedirs(os.path.dirname(args.out_model_json) or ".", exist_ok=True)
     model = {
         "n_states": 2,
-        "n_observations": len(VOCAB),
+        "n_observations": len(VOCAB_USED),
         "startprob": pi.tolist(),
         "transmat": A.tolist(),
         "emissionprob": B.tolist(),
-        order_key: VOCAB,
+        order_key: VOCAB_USED,
         "ngram": args.ngram,
         "training": {
             "train_method": args.train_method,
@@ -496,17 +771,18 @@ def main():
             "self_loop": args.self_loop,
             "emis_smooth": args.emis_smooth,
             "trans_smooth": args.trans_smooth,
+            "n_workers": n_workers,
         },
     }
     with open(args.out_model_json, "w") as f:
         json.dump(model, f, indent=2)
 
     if args.ngram == 1:
-        vocab_data = {"bases": VOCAB, "index": IDX}
+        vocab_data = {"bases": VOCAB_USED, "index": IDX}
     elif args.ngram == 2:
-        vocab_data = {"dinucs": VOCAB, "index": IDX}
+        vocab_data = {"dinucs": VOCAB_USED, "index": IDX}
     elif args.ngram == 3:
-        vocab_data = {"trinucs": VOCAB, "index": IDX}
+        vocab_data = {"trinucs": VOCAB_USED, "index": IDX}
     with open(args.out_vocab_json,"w") as f: json.dump(vocab_data,f,indent=2)
 
     with open(args.out_states_json, "w") as f:
@@ -516,7 +792,18 @@ def main():
     print(f"[OK] vocab  -> {args.out_vocab_json}")
     print(f"[OK] states -> {args.out_states_json}")
 
+    # -------------------- End timing -------------------- #
+    end_time = time.time()
+
+    # -------------------- Report memory usage if tracking was enabled -------------------- #
+    if args.track_memory:
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        report_memory(peak)
+
+    # -------------------- Always report timing -------------------- #
+    report_timing(start_time, end_time)
+
 
 if __name__ == "__main__":
     main()
-
