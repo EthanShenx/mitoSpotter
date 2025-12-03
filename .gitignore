@@ -7,6 +7,7 @@ data/Mus_musculus.GRCm39.cds.all.fa
 data/Rattus_norvegicus.GRCr8.115.gtf
 data/Rattus_norvegicus.GRCr8.cdna.all.fa
 data/Rattus_norvegicus.GRCr8.cds.all.fa
+out_dir/01_ids/human_all_ids_nuclear.txt
 out_dir/02_split_fasta/human_nuclear_cdna.fa
 out_dir/02_split_fasta/human_nuclear_cds.fa
 out_dir/03_unit/holdout/human_nuclear_1nt_holdout.tsv
