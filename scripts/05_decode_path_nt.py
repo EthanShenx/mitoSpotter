@@ -467,7 +467,7 @@ def main():
     # Core parameters
     ap.add_argument(
         "--method",
-        choices=["viterbi", "em"],
+        choices=["viterbi", "posterior"],
         required=True)
     ap.add_argument("--species", choices=["hs", "mm", "rn"], required=True)
     ap.add_argument("--assets_dir", default="out")
@@ -546,7 +546,7 @@ def main():
     
     # Prepare optional PDF writer (EM only)
     pdf = None
-    if args.method == "em" and args.out_pdf:
+    if args.method == "posterior" and args.out_pdf:
         pdf = PdfPages(args.out_pdf)
     
     # Track processing statistics
@@ -625,7 +625,7 @@ def main():
     # Print summary
     print(f"[OK] {args.method} decode -> {args.out_tsv}")
     print(f"[OK] Processed: {n_processed} sequences, Skipped: {n_skipped} sequences")
-    if args.method == "em" and args.out_pdf:
+    if args.method == "posterior" and args.out_pdf:
         print(f"[OK] PDF visualization -> {args.out_pdf}")
     
     # -------------------- Report memory usage if tracking was enabled -------------------- #
