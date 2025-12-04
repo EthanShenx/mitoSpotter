@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-# Unified HMM decoder: supports both Viterbi and posterior (EM/forward-backward) decoding
-# for nuclear vs mitochondrial classification with optional visualization.
+"""
+Unified HMM decoder: supports both Viterbi and posterior (EM/forward-backward) decoding
+for nuclear vs mitochondrial classification with optional visualization.
+
+Modified version: accepts explicit --model_json, --vocab_json, --states_json paths
+for benchmarking custom-trained models.
+"""
 
 import argparse
 import json
@@ -460,7 +465,8 @@ def main():
     ap = argparse.ArgumentParser(
         description=(
             "Unified HMM decoder: Viterbi or posterior (EM/forward-backward) "
-            "for nuclear vs mitochondrial classification."
+            "for nuclear vs mitochondrial classification. "
+            "Modified version with explicit model path options for benchmarking."
         )
     )
     
@@ -469,9 +475,22 @@ def main():
         "--method",
         choices=["viterbi", "posterior"],
         required=True)
-    ap.add_argument("--species", choices=["hs", "mm", "rn"], required=True)
-    ap.add_argument("--assets_dir", default="out")
     ap.add_argument("--ngram", type=int, choices=[1,2,3], default=1)
+    
+    # Model loading options - two modes:
+    # Mode 1: Species-based (original behavior)
+    ap.add_argument("--species", choices=["hs", "mm", "rn"],
+                    help="Species identifier for auto-resolving model assets")
+    ap.add_argument("--assets_dir", default="out",
+                    help="Directory containing model assets (used with --species)")
+    
+    # Mode 2: Explicit paths (new for benchmarking)
+    ap.add_argument("--model_json",
+                    help="Explicit path to model JSON file")
+    ap.add_argument("--vocab_json",
+                    help="Explicit path to vocabulary JSON file")
+    ap.add_argument("--states_json",
+                    help="Explicit path to states JSON file")
     
     # Input options
     ap.add_argument("--fasta")
@@ -527,6 +546,36 @@ def main():
     if not (args.fasta or args.seq or args.stdin):
         raise SystemExit("Provide input via --fasta or --seq (repeatable) or --stdin.")
     
+    # Validate model loading mode
+    explicit_mode = args.model_json or args.vocab_json or args.states_json
+    species_mode = args.species is not None
+    
+    if explicit_mode and species_mode:
+        raise SystemExit(
+            "Cannot use both --species and explicit paths (--model_json, --vocab_json, --states_json). "
+            "Choose one mode."
+        )
+    
+    if explicit_mode:
+        # All three must be provided
+        if not (args.model_json and args.vocab_json and args.states_json):
+            raise SystemExit(
+                "When using explicit paths, all three must be provided: "
+                "--model_json, --vocab_json, --states_json"
+            )
+        model_p, vocab_p, states_p = args.model_json, args.vocab_json, args.states_json
+        # Verify files exist
+        for p in (model_p, vocab_p, states_p):
+            if not op.exists(p):
+                raise SystemExit(f"File not found: {p}")
+    elif species_mode:
+        model_p, vocab_p, states_p = resolve_assets(args.species, args.assets_dir, args.ngram)
+    else:
+        raise SystemExit(
+            "Must provide either --species or explicit paths "
+            "(--model_json, --vocab_json, --states_json)."
+        )
+    
     # -------------------- Start timing -------------------- #
     start_time = time.time()
     
@@ -540,7 +589,6 @@ def main():
             args.track_memory = False
     
     # Load model and assets
-    model_p, vocab_p, states_p = resolve_assets(args.species, args.assets_dir, args.ngram)
     pi, A, B, vocab_idx = load_model(model_p, vocab_p)
     state_names, nuc_id, mito_id = load_states(states_p)
     
