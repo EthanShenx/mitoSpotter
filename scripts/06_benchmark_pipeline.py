@@ -1,31 +1,4 @@
 #!/usr/bin/env python3
-"""
-Benchmarking Pipeline for HMM-based Mitochondrial vs Nuclear CDS Classifier
-
-This script runs a rigorous benchmark of 15 HMM model variants:
-- 3 unit sizes (1nt, 2nt, 3nt)
-- 5 training regimes per unit size:
-  (a) pure_em_20:       EM 20 iters, Viterbi 0
-  (b) pure_viterbi_20:  EM 0, Viterbi 20
-  (c) hybrid_em5_vit15: EM 5, Viterbi 15
-  (d) hybrid_em10_vit10: EM 10, Viterbi 10
-  (e) hybrid_em15_vit5: EM 15, Viterbi 5
-
-For each variant, the pipeline:
-1. Trains the HMM model, measuring wall-clock time and peak memory
-2. Decodes holdout sequences using Viterbi
-3. Computes classification metrics (accuracy, precision, recall, F1)
-4. Aggregates results into a final CSV
-
-Usage:
-    python 06_benchmark_pipeline.py \
-        --project_root /path/to/mitoSpotter \
-        --output_dir /path/to/mitoSpotter/out_dir/04_model \
-        --n_workers 4
-
-Author: Benchmarking pipeline for mitoSpotter project
-"""
-
 import argparse
 import json
 import os
@@ -38,7 +11,6 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import csv
-
 
 # ============================================================================
 # Configuration
