@@ -1,23 +1,22 @@
 # mitoSpotter Web UI (Demo)
 
-A minimal but extendable web console that wraps the existing `05_viterbi_decode_scratch.py` pipeline without modifying it. The backend reuses the current Python scripts, while the frontend offers an interactive form for job submission and result visualization.
+A minimal but extendable web console that wraps the existing decoder scripts without modifying them. It now targets the unified NT decoder (`scripts/05_decode_path_nt.py`). The backend reuses your Python scripts, while the frontend offers an interactive form for job submission and result visualization.
 
 ## Features
 
 - Upload FASTA files or paste raw/FASTA-formatted nucleotide sequences.
-- Configure decode options (`code`, `min_orf_nt`, optional Viterbi path emission).
+- Configure decode options (mode `nt1/nt2/nt3`, method `viterbi/posterior`, `min_len`, optional path emission).
 - Elegant UI with the requested color palette (`#4c2c2e`, `#e8b287`, `#ae9890`, `#a888a0`).
 - Displays decoded summaries in a table, plus optional state paths.
 - Backend and pipeline are decoupled; the web layer simply shells out to the existing script.
-- Modes: codon, single-nucleotide (1-nt), di-nucleotide (2-nt), and amino-acid (AA).
- - Modes: codon, single-nucleotide (1-nt), di-nucleotide (2-nt), tri-nucleotide (3-nt), and amino-acid (AA).
+- Modes: single-nucleotide (1-nt), di-nucleotide (2-nt), tri-nucleotide (3-nt).
 
 ## Local Quickstart
 
 1. **Install dependencies** (inside your preferred virtual environment):
 
    ```bash
-   pip install flask biopython numpy
+   pip install flask biopython numpy matplotlib
    ```
 
    > `biopython` and `numpy` are already required by the pipeline itself. Add other packages here if your environment does not have them yet.
@@ -34,12 +33,8 @@ A minimal but extendable web console that wraps the existing `05_viterbi_decode_
 
 ## Deployment Notes
 
-- The web layer only needs access to:
-  - `scripts/05_viterbi_decode_scratch.py`
-- For codon mode:
-  - `out/<sp>_mitoSpotter_hmm_codon.json` (or legacy `out/<sp>_mitoSpotter_hmm.json`)
-  - `out/<sp>_codon_vocab.json`
-  - `out/<sp>_state_names.json`
+- The web layer uses:
+  - `scripts/05_decode_path_nt.py`
 - For 1-nt mode:
   - `out/<sp>_mitoSpotter_hmm_1nt.json`
   - `out/<sp>_nt_vocab.json`
@@ -52,12 +47,7 @@ A minimal but extendable web console that wraps the existing `05_viterbi_decode_
   - `out/<sp>_mitoSpotter_hmm_3nt.json`
   - `out/<sp>_nt3_vocab.json`
   - `out/<sp>_state_names.json`
-- For AA mode:
-  - `out/<sp>_mitoSpotter_hmm_aa.json`
-  - `out/<sp>_aa_vocab.json`
-  - `out/<sp>_state_names.json`
-
-> Note: Human AA model assets are not yet available; mouse (`mm`) and rat (`rn`) AA assets are supported.
+- Amino-acid and codon decoders are not used by the current web layer.
 - All resources are resolved relative to the project root (`DecodeConfig.with_project_defaults`). If you reorganise files or add more trained models, update `DecodeConfig` or extend `/api/config` to expose the new presets.
 - For production, consider running under `gunicorn` or another WSGI server:
 
@@ -72,7 +62,7 @@ A minimal but extendable web console that wraps the existing `05_viterbi_decode_
 - Add authentication or per-user work queues by building additional endpoints around `DecodeRunner`.
 - Swap `DecodeRunner` for a job dispatcher (Celery, message queue) without touching the UI; only the `/api/run` handler needs to change.
 - Surface more runtime parameters by whitelisting them in the form and passing through to `DecodeRunner`.
-- The frontend uses vanilla JS; you can migrate to a component framework later without changing the backend contract (`POST /api/run` with form data, JSON response).
+- The frontend uses vanilla JS; you can migrate to a component framework later without changing the backend contract (`POST /api/run` with form data, JSON response). The unified decoder expects: `mode` in {`nt1`,`nt2`,`nt3`}, `method` in {`viterbi`,`posterior`}, and `min_len` (nt threshold).
 
 ## Testing
 

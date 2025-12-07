@@ -25,57 +25,36 @@
           <div class="form-group">
             <label>Decoder Type</label>
             <div role="group" aria-label="Decoder Type" class="radio-row">
-              <label class="radio"><input type="radio" name="mode" value="nt1" id="mode_nt1" /> Single nucleotide (1-nt)</label>
+              <label class="radio"><input type="radio" name="mode" value="nt1" id="mode_nt1" checked /> Single nucleotide (1-nt)</label>
               <label class="radio"><input type="radio" name="mode" value="nt2" id="mode_nt2" /> Di-nucleotide (2-nt)</label>
               <label class="radio"><input type="radio" name="mode" value="nt3" id="mode_nt3" /> Tri-nucleotide (3-nt)</label>
-              <label class="radio"><input type="radio" name="mode" value="codon" id="mode_codon" checked /> Codon-based</label>
-              <label class="radio"><input type="radio" name="mode" value="aa" id="mode_aa" /> Amino acid</label>
             </div>
           </div>
+
           <div class="form-group span-2">
             <div class="label-row">
               <label for="sequence_text">Nucleotide Sequences</label>
-              <button
-                type="button"
-                id="load-demo"
-                class="demo-button"
-              >
-                Load demo data
-              </button>
+              <button type="button" id="load-demo" class="demo-button">Load demo sequence</button>
             </div>
             <textarea
               id="sequence_text"
               name="sequence_text"
-              rows="6"
+              rows="8"
               placeholder=">seq1\nATG...\n>seq2\n... or enter raw sequences per line"
             ></textarea>
             <small>Paste FASTA-formatted or plain sequences (optional).</small>
           </div>
 
           <div class="form-group">
-            <label for="fasta_file">Upload FASTA</label>
+            <div class="label-row">
+              <label for="fasta_file">Upload FASTA</label>
+              <div class="inline-actions">
+                <span id="fasta-loaded-badge" class="badge-check" hidden title="FASTA loaded" aria-live="polite">✓</span>
+                <button type="button" id="load-demo-fasta" class="demo-button">Load demo FASTA</button>
+              </div>
+            </div>
             <input type="file" id="fasta_file" name="fasta_file" accept=".fa,.fasta,.fna,.txt" />
             <small>Provide a single FASTA file. You may also paste sequences above.</small>
-          </div>
-
-          <div class="form-group">
-            <label for="species">Species</label>
-            <select id="species" name="species" required></select>
-            <small>Choose the species-specific mitoSpotter model.</small>
-          </div>
-
-          <div class="form-group">
-            <label for="code">Genetic Code</label>
-            <select id="code" name="code">
-              <option value="auto" selected>Auto detect</option>
-              <option value="standard">Standard</option>
-              <option value="vertebrate_mito">Vertebrate Mitochondrial</option>
-            </select>
-          </div>
-
-          <div class="form-group" id="min_orf_group">
-            <label for="min_orf_nt">Minimum ORF (nt)</label>
-            <input type="number" id="min_orf_nt" name="min_orf_nt" min="30" value="150" />
           </div>
 
           <div class="form-group">
@@ -96,6 +75,13 @@
       <section class="card" id="results-card" hidden>
         <div class="card-header">
           <h2>Results</h2>
+          <div class="download-wrapper">
+            <button id="download-results" class="download-btn" type="button" hidden>Download Results</button>
+            <div id="download-menu" class="download-menu" hidden>
+              <button type="button" data-format="tsv">Download TSV</button>
+              <button type="button" data-format="csv">Download CSV</button>
+            </div>
+          </div>
         </div>
         <p id="results-summary" class="results-summary" hidden></p>
           <div class="table-wrapper">
@@ -103,11 +89,10 @@
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Log Prob</th>
-                  <th>Winner</th>
+                  <th>Call</th>
                   <th>Nuclear%</th>
                   <th>Mito%</th>
-                  <th id="len-header">Codons</th>
+                  <th id="len-header">Nucleotides</th>
                 </tr>
               </thead>
               <tbody></tbody>

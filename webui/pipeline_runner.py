@@ -27,9 +27,13 @@ class SpeciesAssets:
 
 @dataclass
 class DecodeConfig:
-    """Holds script paths, assets dir, and available species bundles per mode."""
+    """Holds script paths, assets dir, and available species bundles per mode.
 
-    script_paths: Dict[str, Path]  # {"codon": path, "nt1": path, "nt2": path, "nt3": path, "aa": path}
+    This revision aligns to the unified NT decoder (scripts/05_decode_path_nt.py).
+    Only nt1/nt2/nt3 modes are exposed.
+    """
+
+    script_paths: Dict[str, Path]  # {"nt1": path, "nt2": path, "nt3": path}
     assets_dir: Path
     species_map_by_mode: Dict[str, Dict[str, SpeciesAssets]]  # mode -> {species_id: assets}
     default_species_id_by_mode: Dict[str, str]
@@ -38,30 +42,25 @@ class DecodeConfig:
     def with_project_defaults(cls, project_root: Path) -> "DecodeConfig":
         """Create a config by scanning the default project layout."""
 
-        script_paths = {
-            "codon": project_root / "scripts" / "05_viterbi_decode_scratch.py",
-            "nt1": project_root / "scripts" / "05_viterbi_decode_scratch_1_nt.py",
-            "nt2": project_root / "scripts" / "05_viterbi_decode_scratch_2_nt.py",
-            "nt3": project_root / "scripts" / "05_viterbi_decode_scratch_3_nt.py",
-            "aa": project_root / "scripts" / "05_viterbi_decode_scratch_aa.py",
-        }
+        # Unified decoder supports ngram=1/2/3 via a single script
+        unified = project_root / "scripts" / "05_decode_path_nt.py"
+        script_paths = {"nt1": unified, "nt2": unified, "nt3": unified}
         assets_dir = project_root / "out"
 
-        species_map_by_mode: Dict[str, Dict[str, SpeciesAssets]] = {"codon": {}, "nt1": {}, "nt2": {}, "nt3": {}, "aa": {}}
+        species_map_by_mode: Dict[str, Dict[str, SpeciesAssets]] = {"nt1": {}, "nt2": {}, "nt3": {}}
 
         def add_species(mode: str, species_id: str, model_path: Path, vocab_path: Path, states_path: Path) -> None:
             if not (model_path.exists() and vocab_path.exists() and states_path.exists()):
                 return
             label = SPECIES_LABELS.get(species_id, species_id.upper())
-            units = "codons"
             if mode == "nt1":
                 units = "nt"
             elif mode == "nt2":
                 units = "dinucs"
             elif mode == "nt3":
                 units = "trinucs"
-            elif mode == "aa":
-                units = "aa"
+            else:
+                units = "nt"
 
             species_map_by_mode[mode][species_id] = SpeciesAssets(
                 species_id=species_id,
@@ -71,31 +70,6 @@ class DecodeConfig:
                 states_json=states_path,
                 units=units,
             )
-
-        # Scan codon-mode assets
-        hmm_suffix = "_mitoSpotter_hmm_codon.json"
-        legacy_suffix = "_mitoSpotter_hmm.json"
-        for hmm_path in sorted(assets_dir.glob(f"*{hmm_suffix}")):
-            prefix = hmm_path.name.split(hmm_suffix, 1)[0]
-            if prefix:
-                add_species(
-                    "codon",
-                    prefix,
-                    model_path=hmm_path,
-                    vocab_path=assets_dir / f"{prefix}_codon_vocab.json",
-                    states_path=assets_dir / f"{prefix}_state_names.json",
-                )
-        # Legacy support
-        for hmm_path in sorted(assets_dir.glob(f"*{legacy_suffix}")):
-            prefix = hmm_path.name.split(legacy_suffix, 1)[0]
-            if prefix and prefix not in species_map_by_mode["codon"]:
-                add_species(
-                    "codon",
-                    prefix,
-                    model_path=hmm_path,
-                    vocab_path=assets_dir / f"{prefix}_codon_vocab.json",
-                    states_path=assets_dir / f"{prefix}_state_names.json",
-                )
 
         # Scan 1-nt mode assets (states may be either *_nt_state_names.json or *_state_names.json)
         nt_suffix = "_mitoSpotter_hmm_1nt.json"
@@ -139,17 +113,9 @@ class DecodeConfig:
             states_path = assets_dir / f"{prefix}_state_names.json"
             add_species("nt3", prefix, model_path=hmm_path, vocab_path=vocab_path, states_path=states_path)
 
-        # Scan amino-acid mode assets
-        aa_suffix = "_mitoSpotter_hmm_aa.json"
-        for hmm_path in sorted(assets_dir.glob(f"*{aa_suffix}")):
-            prefix = hmm_path.name.split(aa_suffix, 1)[0]
-            if not prefix:
-                continue
-            vocab_path = assets_dir / f"{prefix}_aa_vocab.json"
-            states_path = assets_dir / f"{prefix}_state_names.json"
-            add_species("aa", prefix, model_path=hmm_path, vocab_path=vocab_path, states_path=states_path)
+        # Amino-acid mode assets are not used by the unified NT decoder/UI
 
-        if not species_map_by_mode["codon"] and not species_map_by_mode["nt1"] and not species_map_by_mode["nt2"]:
+        if not species_map_by_mode["nt1"] and not species_map_by_mode["nt2"] and not species_map_by_mode["nt3"]:
             raise FileNotFoundError(f"No species asset bundles found in {assets_dir}")
 
         default_species_id_by_mode: Dict[str, str] = {}
@@ -198,20 +164,24 @@ class DecodeRunner:
         *,
         sequences: Optional[Iterable[Tuple[str, str]]] = None,
         fasta_path: Optional[Path] = None,
-        mode: str = "codon",
-        code: str = "auto",
-        min_orf_nt: int = 150,
+        mode: str = "nt1",
+        method: str = "viterbi",
+        min_len: Optional[int] = None,
         emit_path: bool = False,
         workdir: Optional[Path] = None,
         species_id: Optional[str] = None,
     ) -> Dict[str, List[Dict[str, object]]]:
-        """Run the decode script and parse its TSV output."""
+        """Run the decode script and parse its TSV output (unified NT decoder)."""
         if not sequences and not fasta_path:
             raise ValueError("At least one of sequences or fasta_path must be provided.")
 
-        mode = mode or "codon"
-        if mode not in ("codon", "nt1", "nt2", "nt3", "aa"):
-            raise ValueError("mode must be 'codon', 'nt1', 'nt2', 'nt3', or 'aa'")
+        mode = mode or "nt1"
+        if mode not in ("nt1", "nt2", "nt3"):
+            raise ValueError("mode must be 'nt1', 'nt2', or 'nt3'")
+
+        method = method or "viterbi"
+        if method not in ("viterbi", "posterior"):
+            raise ValueError("method must be 'viterbi' or 'posterior'")
 
         assets = self.config.get_species(mode, species_id)
         script_path = self.config.script_paths[mode]
@@ -233,82 +203,140 @@ class DecodeRunner:
 
             output_tsv = tmpdir / "decode_output.tsv"
 
-            cmd = ["python", str(script_path), "--species", assets.species_id, "--assets_dir", str(self.config.assets_dir), "--out_tsv", str(output_tsv)]
+            # Build candidate command lists in order of preference
+            base_ngram = [
+                "python",
+                str(script_path),
+                "--ngram",
+                "1" if mode == "nt1" else ("2" if mode == "nt2" else "3"),
+            ]
 
-            # Common options
-            cmd.extend(["--code", code])
+            explicit_base = base_ngram + [
+                "--model_json", str(assets.model_json),
+                "--vocab_json", str(assets.vocab_json),
+                "--states_json", str(assets.states_json),
+                "--out_tsv", str(output_tsv),
+            ]
+            explicit_with_method = base_ngram + ["--method", method] + explicit_base[len(base_ngram):]
 
-            if mode == "codon":
-                cmd.extend(["--min_orf_nt", str(min_orf_nt)])
-            elif mode == "nt1":
-                # No ORF limits for nt1: analyze full cleaned sequence
-                cmd.extend(["--segment", "cds", "--min_len", "0"])
-            elif mode == "nt2":
-                # Mirror nt1 behavior: analyze full cleaned sequence, no ORF constraints
-                cmd.extend(["--segment", "cds", "--min_len", "0"])
-            elif mode == "nt3":
-                # Mirror nt1/nt2 behavior: analyze full cleaned sequence, no ORF constraints
-                cmd.extend(["--segment", "cds", "--min_len", "0"])
-            else:  # aa
-                # AA mode uses nt threshold; default to ORF segmentation like codon
-                cmd.extend(["--segment", "orf", "--min_nt", str(min_orf_nt)])
+            fallback_base = base_ngram + [
+                "--species", assets.species_id,
+                "--assets_dir", str(self.config.assets_dir),
+                "--out_tsv", str(output_tsv),
+            ]
+            fallback_with_method = base_ngram + ["--method", method] + fallback_base[len(base_ngram):]
 
-            if emit_path:
-                cmd.append("--emit_path")
+            def add_common(cmd_list: List[str]) -> List[str]:
+                out = cmd_list[:]
+                if emit_path:
+                    out.append("--emit_path")
+                if effective_fasta is not None:
+                    out.extend(["--fasta", str(effective_fasta)])
+                return out
 
-            if effective_fasta is not None:
-                cmd.extend(["--fasta", str(effective_fasta)])
+            candidates = [
+                add_common(explicit_with_method),
+                add_common(explicit_base),
+                add_common(fallback_with_method),
+                add_common(fallback_base),
+            ]
 
-            completed = subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                text=True,
-                cwd=str(workdir or script_path.parent.parent),
-            )
+            def _run_or_raise(args_list):
+                return subprocess.run(
+                    args_list,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(workdir or script_path.parent.parent),
+                )
+
+            last_err = None
+            for c in candidates:
+                try:
+                    completed = _run_or_raise(c)
+                    break
+                except subprocess.CalledProcessError as e:
+                    last_err = e
+            else:
+                msg = (last_err.stderr if last_err else "") or "decoder failed"
+                raise RuntimeError(f"Decoder failed. Last error: {msg.strip()}")
 
             records: List[Dict[str, object]] = []
             paths: List[Dict[str, object]] = []
 
             with output_tsv.open("r", encoding="utf-8") as fh:
-                reader = csv.reader(fh, delimiter="\t")
-                for row in reader:
-                    if not row or row[0].startswith("#"):
+                for raw_line in fh:
+                    line = raw_line.rstrip("\n")
+                    if not line:
                         continue
+                    if line.startswith("#"):
+                        # Path lines example: #{id}_PATH\tstate_id state_id ...
+                        if "\t" in line:
+                            key, rest = line[1:].split("\t", 1)
+                            if key.endswith("_PATH"):
+                                seq_id = key[:-5]
+                                states = rest.strip().split()
+                                paths.append({"id": seq_id, "states": states})
+                        continue
+                    row = line.split("\t")
+                    # Support alternate PATH row format: id\tPATH\t...states...
                     if len(row) >= 2 and row[1] == "PATH":
-                        paths.append(
-                            {
-                                "id": row[0],
-                                "context": row[2] if len(row) > 2 else "",
-                                "states": row[3].split() if len(row) > 3 else [],
-                            }
-                        )
+                        seq_id = row[0]
+                        states = []
+                        if len(row) >= 3:
+                            states = (row[-1] if len(row) == 3 else " ".join(row[2:])).split()
+                        paths.append({"id": seq_id, "states": states})
                         continue
-                    if len(row) < 6:
+                    # Expect results row; be tolerant of column counts
+                    if len(row) < 5:
                         continue
-                    length_val = int(row[5])
+                    rid = row[0]
+                    # Column 1 may be loglik/logprob
+                    try:
+                        loglik = float(row[1])
+                    except ValueError:
+                        # if header row or non-numeric, skip
+                        continue
+                    # nuclear/mito fractions may be at 2/3, with call then lengths
+                    def _to_float(s: str, default: float = 0.0) -> float:
+                        try:
+                            return float(s)
+                        except Exception:
+                            return default
+                    nuclear_frac = _to_float(row[2], 0.0) if len(row) > 2 else 0.0
+                    mito_frac = _to_float(row[3], 0.0) if len(row) > 3 else 0.0
+                    call = row[4] if len(row) > 4 and row[4] else ("mitochondrial" if mito_frac >= nuclear_frac else "nuclear")
+                    # Attempt to read sequence and token lengths if present
+                    seq_len_nt = None
+                    token_count = None
+                    if len(row) > 5:
+                        try:
+                            seq_len_nt = int(row[5])
+                        except Exception:
+                            seq_len_nt = None
+                    if len(row) > 6:
+                        try:
+                            token_count = int(row[6])
+                        except Exception:
+                            token_count = None
+
                     rec = {
-                        "id": row[0],
-                        "logprob": float(row[1]),
-                        "winner": row[2],
-                        "nuclear_frac": float(row[3]),
-                        "mito_frac": float(row[4]),
-                        "length": length_val,
+                        "id": rid,
+                        "loglik": loglik,
+                        "logprob": loglik,  # backwards-compat field name
+                        "winner": call,
+                        "nuclear_frac": nuclear_frac,
+                        "mito_frac": mito_frac,
+                        "length": seq_len_nt if seq_len_nt is not None else (token_count or 0),
+                        "len_nt": seq_len_nt if seq_len_nt is not None else 0,
+                        "tokens": token_count if token_count is not None else 0,
                         "units": assets.units,
                     }
-                    # Backwards-compatible fields for existing UI
-                    if assets.units == "codons":
-                        rec["len_codons"] = length_val
-                    elif assets.units == "nt":
-                        rec["len_nt"] = length_val
-                    elif assets.units == "aa":
-                        rec["len_aa"] = length_val
-                    elif assets.units == "dinucs":
-                        rec["len_dinuc"] = length_val
+                    # Optional convenience for UI header
+                    if assets.units == "dinucs":
+                        rec["len_dinuc"] = token_count
                     elif assets.units == "trinucs":
-                        rec["len_trinuc"] = length_val
-                    else:
-                        pass
+                        rec["len_trinuc"] = token_count
                     records.append(rec)
 
             return {
@@ -318,4 +346,5 @@ class DecodeRunner:
                 "stderr": completed.stderr.strip(),
                 "species_id": assets.species_id,
                 "mode": mode,
+                "method": method,
             }

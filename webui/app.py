@@ -67,16 +67,8 @@ def _parse_sequence_text(raw: str) -> List[Tuple[str, str]]:
 def get_config():
     refresh_runner()
     cfg = runner.config
-    # Defaults: prefer codon; then aa; then nt1; then nt2; then nt3
-    default_mode = (
-        "codon"
-        if cfg.species_map_by_mode.get("codon")
-        else (
-            "aa"
-            if cfg.species_map_by_mode.get("aa")
-            else ("nt1" if cfg.species_map_by_mode.get("nt1") else ("nt2" if cfg.species_map_by_mode.get("nt2") else "nt3"))
-        )
-    )
+    # Defaults: prefer nt1, then nt2, then nt3 (unified NT decoder)
+    default_mode = "nt1" if cfg.species_map_by_mode.get("nt1") else ("nt2" if cfg.species_map_by_mode.get("nt2") else "nt3")
     default_assets = cfg.get_species(default_mode)
 
     def list_species(mode: str):
@@ -98,25 +90,17 @@ def get_config():
         {
             "defaults": {
                 "mode": default_mode,
+                "method": "viterbi",
                 "species_id": default_assets.species_id,
                 "model_json": str(default_assets.model_json.relative_to(PROJECT_ROOT)),
                 "vocab_json": str(default_assets.vocab_json.relative_to(PROJECT_ROOT)),
                 "states_json": str(default_assets.states_json.relative_to(PROJECT_ROOT)),
-                "code": "auto",
-                "min_orf_nt": 150,
             },
             "modes": {
-                "codon": {"species_options": list_species("codon")},
-                "aa": {"species_options": list_species("aa")},
                 "nt1": {"species_options": list_species("nt1")},
                 "nt2": {"species_options": list_species("nt2")},
                 "nt3": {"species_options": list_species("nt3")},
             },
-            "code_options": [
-                {"value": "auto", "label": "Auto detect"},
-                {"value": "standard", "label": "Standard"},
-                {"value": "vertebrate_mito", "label": "Vertebrate mitochondrial"},
-            ],
         }
     )
 
@@ -125,9 +109,8 @@ def get_config():
 def run_decode():
     refresh_runner()
     form = request.form
-    mode = form.get("mode", "codon")
-    code = form.get("code", "auto")
-    min_orf_nt = int(form.get("min_orf_nt", 150) or 150)
+    mode = form.get("mode", "nt1")
+    method = "viterbi"  # UI fixed to Viterbi; script supports only Viterbi per requirements
     emit_path = form.get("emit_path", "false").lower() in ("true", "1", "yes", "on")
     species_id = form.get("species")
     sequence_text = form.get("sequence_text", "")
@@ -151,8 +134,7 @@ def run_decode():
             sequences=sequences,
             fasta_path=temp_file_path,
             mode=mode,
-            code=code,
-            min_orf_nt=min_orf_nt,
+            method=method,
             emit_path=emit_path,
             species_id=species_id,
         )

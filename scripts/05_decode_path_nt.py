@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Unified HMM decoder: supports both Viterbi and posterior (EM/forward-backward) decoding
-for nuclear vs mitochondrial classification with optional visualization.
+HMM Viterbi decoder for nuclear vs mitochondrial classification.
 
-Modified version: accepts explicit --model_json, --vocab_json, --states_json paths
+Accepts explicit --model_json, --vocab_json, --states_json paths
 for benchmarking custom-trained models.
 """
 
@@ -16,13 +15,6 @@ import time
 from datetime import datetime
 import numpy as np
 from Bio import SeqIO
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-
-matplotlib.rcParams["font.family"] = "Arial"
 
 # Optional memory tracking - only used when explicitly requested
 try:
@@ -95,43 +87,6 @@ def report_memory(peak_memory):
 def clean_nt(s):
     """Clean nucleotide string: uppercase, replace U->T, keep only A/C/G/T."""
     return re.sub(r"[^ACGT]", "", str(s).upper().replace("U", "T"))
-
-
-def resolve_assets(species, assets_dir, ngram):
-    """
-    Resolve model/vocab/state files for a given species.
-    
-    Args:
-        species: Species identifier (e.g., 'hs', 'mm', 'rn')
-        assets_dir: Directory containing model assets
-        ngram: N-gram size (1, 2, or 3) for selecting appropriate vocab file
-    
-    Returns:
-        Tuple of (model_path, vocab_path, states_path)
-    """
-    # Try ngram-specific model first, then fallback to 1nt model
-    model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_{ngram}nt.json")
-    if not op.exists(model):
-        model = op.join(assets_dir, f"{species}_mitoSpotter_hmm_1nt.json")
-    
-    # Vocabulary file candidates - ngram-specific first, then generic
-    vocab_candidates = [
-        op.join(assets_dir, f"{species}_nt{ngram}_vocab.json"),
-        op.join(assets_dir, f"{species}_nt_vocab.json"),
-    ]
-    vocab = next((p for p in vocab_candidates if op.exists(p)), None)
-    
-    # State file candidates  
-    states_candidates = [
-        op.join(assets_dir, f"{species}_nt_state_names.json"),
-        op.join(assets_dir, f"{species}_state_names.json"),
-    ]
-    states = next((p for p in states_candidates if op.exists(p)), None)
-    
-    for p in (model, vocab, states):
-        if not p or not op.exists(p):
-            raise SystemExit(f"Missing asset: {p}")
-    return model, vocab, states
 
 
 def load_model(model_json, vocab_json):
@@ -226,63 +181,6 @@ def forward_ll(pi, A, B, obs):
     return float(np.sum(np.log(c + 1e-300)))
 
 
-def forward_backward(pi, A, B, obs):
-    """
-    Forward-backward with scaling.
-    
-    Returns:
-        loglik: log-likelihood of the sequence
-        gamma: posterior probabilities, shape (T, N)
-    """
-    T = len(obs)
-    N = A.shape[0]
-    
-    if T == 0:
-        raise ValueError("Empty observation sequence is not allowed.")
-    
-    # Forward pass with scaling
-    alpha = np.zeros((T, N), dtype=np.float64)
-    c = np.zeros(T, dtype=np.float64)
-    
-    alpha[0] = pi * B[:, obs[0]]
-    c[0] = alpha[0].sum()
-    if c[0] <= 0.0:
-        c[0] = 1e-300
-    alpha[0] /= c[0]
-    
-    for t in range(1, T):
-        alpha[t] = (alpha[t-1] @ A) * B[:, obs[t]]
-        c[t] = alpha[t].sum()
-        if c[t] <= 0.0:
-            c[t] = 1e-300
-        alpha[t] /= c[t]
-    
-    loglik = float(np.sum(np.log(c)))
-    
-    # Backward pass with same scaling
-    beta = np.zeros((T, N), dtype=np.float64)
-    beta[-1] = 1.0 / c[-1]
-    
-    for t in range(T-2, -1, -1):
-        beta[t] = A @ (B[:, obs[t+1]] * beta[t+1])
-        beta[t] /= c[t]
-    
-    # Posterior probabilities
-    gamma = alpha * beta
-    gamma_sum = gamma.sum(axis=1, keepdims=True)
-    gamma_sum[gamma_sum == 0.0] = 1e-300
-    gamma /= gamma_sum
-    
-    return loglik, gamma
-
-
-def posterior_decode(gamma):
-    """Posterior decoding: argmax over states for each position."""
-    if gamma.size == 0:
-        return np.zeros(0, dtype=np.int64)
-    return np.argmax(gamma, axis=1).astype(np.int64)
-
-
 # -------------------- Summary Functions -------------------- #
 
 def summarize_viterbi(path, nuc_id=0, mito_id=1, state_names=None):
@@ -311,103 +209,6 @@ def summarize_viterbi(path, nuc_id=0, mito_id=1, state_names=None):
         "mito_frac": round(mito, 4),
         "call": name
     }
-
-
-def summarize_posterior(
-    gamma,
-    nuc_id=0,
-    mito_id=1,
-    state_names=None,
-    hi_thresh=0.8,
-    margin=0.2,
-):
-    """
-    Summarize posterior over nuclear/mitochondrial with an ambiguous zone.
-    
-    Returns:
-        dict with nuclear_frac, mito_frac, call
-        call in {"nuclear", "mitochondrial", "ambiguous"}
-    """
-    if gamma.size == 0:
-        return {"nuclear_frac": 0.0, "mito_frac": 0.0, "call": "ambiguous"}
-    
-    nuc_frac = float(gamma[:, nuc_id].mean())
-    mito_frac = float(gamma[:, mito_id].mean())
-    
-    call_label = "ambiguous"
-    
-    # High-confidence mitochondrial
-    if (mito_frac >= hi_thresh) and (mito_frac - nuc_frac >= margin):
-        call_label = "mitochondrial"
-    # High-confidence nuclear
-    elif (nuc_frac >= hi_thresh) and (nuc_frac - mito_frac >= margin):
-        call_label = "nuclear"
-    
-    return {
-        "nuclear_frac": round(nuc_frac, 4),
-        "mito_frac": round(mito_frac, 4),
-        "call": call_label,
-    }
-
-
-# -------------------- Visualization -------------------- #
-
-def make_posterior_figure(gamma, nuc_id, mito_id, seq_id):
-    """
-    Create a stacked bar chart figure for posterior N/M probabilities.
-    """
-    T = gamma.shape[0]
-    x = np.arange(T)
-    
-    nuc_probs = gamma[:, nuc_id]
-    mito_probs = gamma[:, mito_id]
-    
-    color_n = "#da618f"
-    color_m = "#26abdf"
-    
-    fig, ax = plt.subplots(figsize=(10, 3))
-    bar_width = 1.0
-    
-    ax.bar(
-        x, nuc_probs, width=bar_width,
-        color=color_n, label="N (nuclear)", linewidth=0
-    )
-    ax.bar(
-        x, mito_probs, bottom=nuc_probs, width=bar_width,
-        color=color_m, label="M (mitochondrial)", linewidth=0
-    )
-    
-    ax.set_xlim(-0.5, T - 0.5)
-    ax.set_ylim(0.0, 1.0)
-    
-    if T <= 50:
-        ax.set_xticks(x)
-        ax.set_xticklabels([str(i+1) for i in x], fontsize=6, rotation=90)
-    else:
-        step = max(1, T // 20)
-        tick_idx = np.arange(0, T, step)
-        ax.set_xticks(tick_idx)
-        ax.set_xticklabels([str(i+1) for i in tick_idx], fontsize=6, rotation=90)
-    
-    ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
-    ax.set_ylabel("Posterior probability", fontsize=9)
-    ax.set_xlabel("Position (1-based)", fontsize=9)
-    
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.grid(axis="y", linestyle=":", linewidth=0.5, alpha=0.6)
-    
-    ax.set_title(f"{seq_id} posterior N/M probabilities", fontsize=10)
-    
-    box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
-    
-    ax.legend(
-        loc="center left", bbox_to_anchor=(1.02, 0.5),
-        frameon=False, fontsize=8
-    )
-    
-    return fig
 
 
 # -------------------- Input Iteration -------------------- #
@@ -464,33 +265,21 @@ def sequence_to_observations(sequence, ngram, vocab_idx):
 def main():
     ap = argparse.ArgumentParser(
         description=(
-            "Unified HMM decoder: Viterbi or posterior (EM/forward-backward) "
-            "for nuclear vs mitochondrial classification. "
-            "Modified version with explicit model path options for benchmarking."
+            "HMM Viterbi decoder for nuclear vs mitochondrial classification. "
+            "Requires explicit model path options."
         )
     )
     
     # Core parameters
-    ap.add_argument(
-        "--method",
-        choices=["viterbi", "posterior"],
-        required=True)
     ap.add_argument("--ngram", type=int, choices=[1,2,3], default=1)
     
-    # Model loading options - two modes:
-    # Mode 1: Species-based (original behavior)
-    ap.add_argument("--species", choices=["hs", "mm", "rn"],
-                    help="Species identifier for auto-resolving model assets")
-    ap.add_argument("--assets_dir", default="out",
-                    help="Directory containing model assets (used with --species)")
-    
-    # Mode 2: Explicit paths (new for benchmarking)
-    ap.add_argument("--model_json",
-                    help="Explicit path to model JSON file")
-    ap.add_argument("--vocab_json",
-                    help="Explicit path to vocabulary JSON file")
-    ap.add_argument("--states_json",
-                    help="Explicit path to states JSON file")
+    # Model loading - explicit paths required
+    ap.add_argument("--model_json", required=True,
+                    help="Path to model JSON file")
+    ap.add_argument("--vocab_json", required=True,
+                    help="Path to vocabulary JSON file")
+    ap.add_argument("--states_json", required=True,
+                    help="Path to states JSON file")
     
     # Input options
     ap.add_argument("--fasta")
@@ -507,30 +296,12 @@ def main():
         help="Minimum sequence length in nucleotides (applied before tokenization)"
     )
     
-    # Posterior-specific parameters
-    ap.add_argument(
-        "--hi_thresh",
-        type=float,
-        default=0.8,
-        help="[EM only] High-confidence threshold for nuclear/mitochondrial fraction."
-    )
-    ap.add_argument(
-        "--margin",
-        type=float,
-        default=0.2,
-        help="[EM only] Minimal difference between fractions to avoid ambiguous call."
-    )
-    
     # Output
     ap.add_argument("--out_tsv", required=True)
     ap.add_argument(
         "--emit_path",
         action="store_true",
         help="Emit decoded path per sequence."
-    )
-    ap.add_argument(
-        "--out_pdf",
-        help="[EM only] Write PDF with per-position N/M posterior probabilities."
     )
     
     # Memory tracking option - only enabled when explicitly set
@@ -546,35 +317,10 @@ def main():
     if not (args.fasta or args.seq or args.stdin):
         raise SystemExit("Provide input via --fasta or --seq (repeatable) or --stdin.")
     
-    # Validate model loading mode
-    explicit_mode = args.model_json or args.vocab_json or args.states_json
-    species_mode = args.species is not None
-    
-    if explicit_mode and species_mode:
-        raise SystemExit(
-            "Cannot use both --species and explicit paths (--model_json, --vocab_json, --states_json). "
-            "Choose one mode."
-        )
-    
-    if explicit_mode:
-        # All three must be provided
-        if not (args.model_json and args.vocab_json and args.states_json):
-            raise SystemExit(
-                "When using explicit paths, all three must be provided: "
-                "--model_json, --vocab_json, --states_json"
-            )
-        model_p, vocab_p, states_p = args.model_json, args.vocab_json, args.states_json
-        # Verify files exist
-        for p in (model_p, vocab_p, states_p):
-            if not op.exists(p):
-                raise SystemExit(f"File not found: {p}")
-    elif species_mode:
-        model_p, vocab_p, states_p = resolve_assets(args.species, args.assets_dir, args.ngram)
-    else:
-        raise SystemExit(
-            "Must provide either --species or explicit paths "
-            "(--model_json, --vocab_json, --states_json)."
-        )
+    # Verify model files exist
+    for p in (args.model_json, args.vocab_json, args.states_json):
+        if not op.exists(p):
+            raise SystemExit(f"File not found: {p}")
     
     # -------------------- Start timing -------------------- #
     start_time = time.time()
@@ -589,13 +335,8 @@ def main():
             args.track_memory = False
     
     # Load model and assets
-    pi, A, B, vocab_idx = load_model(model_p, vocab_p)
-    state_names, nuc_id, mito_id = load_states(states_p)
-    
-    # Prepare optional PDF writer (EM only)
-    pdf = None
-    if args.method == "posterior" and args.out_pdf:
-        pdf = PdfPages(args.out_pdf)
+    pi, A, B, vocab_idx = load_model(args.model_json, args.vocab_json)
+    state_names, nuc_id, mito_id = load_states(args.states_json)
     
     # Track processing statistics
     n_processed = 0
@@ -603,7 +344,6 @@ def main():
     
     with open(args.out_tsv, "w") as fo:
         
-        # Unified header format for both methods
         fo.write(f"#id\tloglik\tnuclear_frac\tmito_frac\tcall\tseq_len_nt\tn_tokens_{args.ngram}mer\n")
         
         for rid, raw in iter_inputs(args):
@@ -620,61 +360,27 @@ def main():
             
             n_processed += 1
             
-            if args.method == "viterbi":
-                ll = forward_ll(pi, A, B, obs)
-                _, path = viterbi(pi, A, B, obs)
-                
-                summ = summarize_viterbi(path, nuc_id, mito_id, state_names)
-                
-                fo.write(
-                    f"{rid}\t{ll:.3f}\t"
-                    f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
-                    f"{summ['call']}\t{nt_length}\t{token_count}\n"
-                )
-                
-                if args.emit_path:
-                    path_str = " ".join(map(str, path.tolist()))
-                    fo.write(f"#{rid}_PATH\t{path_str}\n")
+            ll = forward_ll(pi, A, B, obs)
+            _, path = viterbi(pi, A, B, obs)
             
-            else:  # EM/posterior
-                ll, gamma = forward_backward(pi, A, B, obs)
-                
-                summ = summarize_posterior(
-                    gamma,
-                    nuc_id=nuc_id,
-                    mito_id=mito_id,
-                    state_names=state_names,
-                    hi_thresh=args.hi_thresh,
-                    margin=args.margin,
-                )
-                
-                fo.write(
-                    f"{rid}\t{ll:.3f}\t"
-                    f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
-                    f"{summ['call']}\t{nt_length}\t{token_count}\n"
-                )
-                
-                if args.emit_path:
-                    path = posterior_decode(gamma)
-                    path_str = " ".join(map(str, path.tolist()))
-                    fo.write(f"#{rid}_PATH\t{path_str}\n")
-                
-                if pdf is not None:
-                    fig = make_posterior_figure(gamma, nuc_id, mito_id, rid)
-                    pdf.savefig(fig, bbox_inches="tight")
-                    plt.close(fig)
-    
-    if pdf is not None:
-        pdf.close()
+            summ = summarize_viterbi(path, nuc_id, mito_id, state_names)
+            
+            fo.write(
+                f"{rid}\t{ll:.3f}\t"
+                f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
+                f"{summ['call']}\t{nt_length}\t{token_count}\n"
+            )
+            
+            if args.emit_path:
+                path_str = " ".join(map(str, path.tolist()))
+                fo.write(f"#{rid}_PATH\t{path_str}\n")
     
     # -------------------- End timing -------------------- #
     end_time = time.time()
     
     # Print summary
-    print(f"[OK] {args.method} decode -> {args.out_tsv}")
+    print(f"[OK] Viterbi decode -> {args.out_tsv}")
     print(f"[OK] Processed: {n_processed} sequences, Skipped: {n_skipped} sequences")
-    if args.method == "posterior" and args.out_pdf:
-        print(f"[OK] PDF visualization -> {args.out_pdf}")
     
     # -------------------- Report memory usage if tracking was enabled -------------------- #
     if args.track_memory:
