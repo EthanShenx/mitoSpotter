@@ -607,6 +607,15 @@ def main():
     parser.add_argument("--self_loop", type=float, default=0.995)
     parser.add_argument("--emis_smooth", type=float, default=1.0)
 
+    # Sampling option for nuclear sequences
+    parser.add_argument(
+        "--sample",
+        type=float,
+        default=1.0,
+        help="Fraction of nuclear sequences to use for training (0.0-1.0). "
+             "E.g., 0.3 uses 30%% of nuclear sequences. Default is 1.0 (use all)."
+    )
+
     # Memory tracking option - only enabled when explicitly set
     parser.add_argument(
         "--track_memory",
@@ -658,6 +667,19 @@ def main():
     # Load data
     VOCAB_USED, IDX, order_key = setup_vocab(args.ngram)
     nuc = read_nt_tsv(args.nuclear_nt_tsv, IDX)
+    
+    # Sample nuclear sequences if requested
+    if args.sample < 1.0:
+        if args.sample <= 0.0:
+            raise SystemExit("--sample must be > 0.0")
+        n_original = len(nuc)
+        n_sample = max(1, int(n_original * args.sample))
+        np.random.seed(42)  # For reproducibility
+        indices = np.random.choice(n_original, size=n_sample, replace=False)
+        nuc = [nuc[i] for i in indices]
+        print(f"[INFO] Sampled {n_sample} / {n_original} nuclear sequences "
+              f"({args.sample * 100:.1f}%).", file=sys.stderr)
+    
     mit = read_nt_tsv(args.mito_nt_tsv, IDX)
     allseq = nuc + mit
     
@@ -772,6 +794,7 @@ def main():
             "emis_smooth": args.emis_smooth,
             "trans_smooth": args.trans_smooth,
             "n_workers": n_workers,
+            "sample": args.sample,
         },
     }
     with open(args.out_model_json, "w") as f:

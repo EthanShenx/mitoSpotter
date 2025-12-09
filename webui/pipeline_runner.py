@@ -115,8 +115,31 @@ class DecodeConfig:
 
         # Amino-acid mode assets are not used by the unified NT decoder/UI
 
+        # If nothing found under project_root/out, fall back to scanning benchmark outputs
         if not species_map_by_mode["nt1"] and not species_map_by_mode["nt2"] and not species_map_by_mode["nt3"]:
-            raise FileNotFoundError(f"No species asset bundles found in {assets_dir}")
+            alt_root = project_root / "out_dir" / "04_model"
+            if alt_root.exists():
+                # Scan directories like: out_dir/04_model/1nt/<regime>/{model,vocab,states}.json
+                for mode, unit_dir in ("nt1", "1nt"), ("nt2", "2nt"), ("nt3", "3nt"):
+                    mode_dir = alt_root / unit_dir
+                    if not mode_dir.exists():
+                        continue
+                    for regime_dir in sorted(p for p in mode_dir.iterdir() if p.is_dir()):
+                        model_path = regime_dir / "model.json"
+                        vocab_path = regime_dir / "vocab.json"
+                        states_path = regime_dir / "states.json"
+                        species_id = f"{unit_dir}-{regime_dir.name}"
+                        # Label with unit and regime for clarity in the UI
+                        if model_path.exists() and vocab_path.exists() and states_path.exists():
+                            # Temporarily override label resolution inside add_species by passing species_id
+                            add_species(mode, species_id, model_path=model_path, vocab_path=vocab_path, states_path=states_path)
+                if species_map_by_mode["nt1"] or species_map_by_mode["nt2"] or species_map_by_mode["nt3"]:
+                    assets_dir = alt_root  # reflect the actual assets root for any fallback usage
+
+        if not species_map_by_mode["nt1"] and not species_map_by_mode["nt2"] and not species_map_by_mode["nt3"]:
+            raise FileNotFoundError(
+                f"No species asset bundles found in {project_root / 'out'} or {project_root / 'out_dir' / '04_model'}"
+            )
 
         default_species_id_by_mode: Dict[str, str] = {}
         for mode, smap in species_map_by_mode.items():
