@@ -1,0 +1,11 @@
+name: mitoSpotter
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy==1.24.4
+  - biopython==1.83
+  - tqdm==4.66.1
+  - flask==2.3.3
+  - gunicorn==21.2.0

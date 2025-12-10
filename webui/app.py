@@ -112,6 +112,7 @@ def run_decode():
     mode = form.get("mode", "nt1")
     method = "viterbi"  # UI fixed to Viterbi; script supports only Viterbi per requirements
     emit_path = form.get("emit_path", "false").lower() in ("true", "1", "yes", "on")
+    plotting = form.get("plotting", "false").lower() in ("true", "1", "yes", "on")
     species_id = form.get("species")
     sequence_text = form.get("sequence_text", "")
 
@@ -137,6 +138,7 @@ def run_decode():
             method=method,
             emit_path=emit_path,
             species_id=species_id,
+            plotting=plotting,
         )
     except Exception as exc:  # noqa: BLE001 keep surface succinct
         if temp_file_path and temp_file_path.exists():
@@ -163,6 +165,36 @@ def healthcheck():
 def favicon():
     # Serve the site logo as the favicon so it appears in the browser tab.
     return send_from_directory(app.static_folder, "logo.png")
+
+
+@app.get("/api/plots/<path:relpath>")
+def get_plot(relpath: str):
+    """Serve plot images generated during a decode run.
+
+    Security: only allow paths within the project root and under a Plot_res_* directory,
+    and restrict to common image extensions.
+    """
+    # Basic extension check
+    allowed_ext = {".png", ".jpg", ".jpeg"}
+    if Path(relpath).suffix.lower() not in allowed_ext:
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    # Only allow Plot_res_* top-level directories
+    parts = Path(relpath).parts
+    if not parts or not parts[0].startswith("Plot_res_"):
+        return jsonify({"error": "Invalid plot path"}), 400
+
+    abs_path = (PROJECT_ROOT / relpath).resolve()
+    try:
+        # Ensure the resolved path is within the project root
+        abs_path.relative_to(PROJECT_ROOT)
+    except Exception:
+        return jsonify({"error": "Path traversal denied"}), 400
+
+    if not abs_path.exists() or not abs_path.is_file():
+        return jsonify({"error": "File not found"}), 404
+
+    return send_from_directory(abs_path.parent, abs_path.name)
 
 
 if __name__ == "__main__":

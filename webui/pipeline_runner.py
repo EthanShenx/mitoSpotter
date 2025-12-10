@@ -193,6 +193,7 @@ class DecodeRunner:
         emit_path: bool = False,
         workdir: Optional[Path] = None,
         species_id: Optional[str] = None,
+        plotting: bool = False,
     ) -> Dict[str, List[Dict[str, object]]]:
         """Run the decode script and parse its TSV output (unified NT decoder)."""
         if not sequences and not fasta_path:
@@ -255,6 +256,8 @@ class DecodeRunner:
                     out.append("--emit_path")
                 if effective_fasta is not None:
                     out.extend(["--fasta", str(effective_fasta)])
+                if plotting:
+                    out.append("--plotting")
                 return out
 
             candidates = [
@@ -274,6 +277,7 @@ class DecodeRunner:
                 )
 
             last_err = None
+            completed = None
             for c in candidates:
                 try:
                     completed = _run_or_raise(c)
@@ -362,6 +366,43 @@ class DecodeRunner:
                         rec["len_trinuc"] = token_count
                     records.append(rec)
 
+            # Attempt to parse generated plot files from decoder stderr when plotting is enabled
+            plot_files: List[str] = []
+            plot_dir: Optional[str] = None
+            if plotting and completed is not None:
+                stderr_text = completed.stderr or ""
+                for line in stderr_text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Detect the plot directory line
+                    if line.startswith("[INFO] Generating plots in:"):
+                        # e.g., "[INFO] Generating plots in: Plot_res_20231231_235959"
+                        try:
+                            plot_dir = line.split(":", 1)[1].strip()
+                        except Exception:
+                            plot_dir = None
+                    # Detect individual generated file lines: "- Plot_res_.../file.png"
+                    if line.startswith("-"):
+                        path = line.lstrip("- ")
+                        if path.lower().endswith((".png", ".jpg", ".jpeg")):
+                            plot_files.append(path)
+
+                # Fallback: if we have a directory but no files parsed, scan it
+                if plot_dir and not plot_files:
+                    # Decoder ran with cwd set to project root by default
+                    project_root = script_path.parent.parent
+                    dir_path = (workdir or project_root) / plot_dir
+                    try:
+                        for p in sorted(dir_path.glob("*.png")):
+                            try:
+                                rel = str(p.relative_to(project_root))
+                            except Exception:
+                                rel = str(p.name)
+                            plot_files.append(rel)
+                    except Exception:
+                        pass
+
             return {
                 "records": records,
                 "paths": paths,
@@ -370,4 +411,6 @@ class DecodeRunner:
                 "species_id": assets.species_id,
                 "mode": mode,
                 "method": method,
+                "plots": plot_files,
+                "plot_dir": plot_dir or "",
             }

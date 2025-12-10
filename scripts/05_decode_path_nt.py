@@ -8,6 +8,7 @@ for benchmarking custom-trained models.
 
 import argparse
 import json
+import os
 import os.path as op
 import re
 import sys
@@ -23,8 +24,33 @@ try:
 except ImportError:
     TRACEMALLOC_AVAILABLE = False
 
+# Optional plotting - only used when explicitly requested
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
 # Nucleotide vocabulary
 BASES = ["A", "C", "G", "T"]
+
+# Maximum number of sequences for per-sequence bar charts
+MAX_SEQS_FOR_BAR_CHART = 100
+
+
+# -------------------- Color Palette -------------------- #
+
+# Professional color scheme
+COLORS = {
+    'nuclear': '#1F78B4',       # Blue
+    'mitochondrial': '#E31A1C', # Red
+    'gc': '#33A02C',            # Green
+    'at': '#FF7F00',            # Orange/Gold
+    'background': '#f8f9fa',    # Light gray
+    'grid': '#dee2e6',          # Medium gray
+    'text': '#000000',          # Black
+}
 
 
 # -------------------- Timing and Memory Utilities -------------------- #
@@ -87,6 +113,15 @@ def report_memory(peak_memory):
 def clean_nt(s):
     """Clean nucleotide string: uppercase, replace U->T, keep only A/C/G/T."""
     return re.sub(r"[^ACGT]", "", str(s).upper().replace("U", "T"))
+
+
+def calculate_gc_content(sequence):
+    """Calculate GC content of a cleaned nucleotide sequence."""
+    s = clean_nt(sequence)
+    if len(s) == 0:
+        return 0.0
+    gc_count = s.count('G') + s.count('C')
+    return gc_count / len(s)
 
 
 def load_model(model_json, vocab_json):
@@ -260,6 +295,561 @@ def sequence_to_observations(sequence, ngram, vocab_idx):
     return np.array(obs, dtype=np.int64), len(tokens), nt_length
 
 
+# -------------------- Plotting Functions -------------------- #
+
+def setup_plot_style():
+    """Configure matplotlib for professional-looking plots."""
+    plt.rcParams.update({
+        'font.family': 'sans-serif',
+        'font.size': 11,
+        'axes.titlesize': 14,
+        'axes.titleweight': 'bold',
+        'axes.labelsize': 12,
+        'axes.facecolor': COLORS['background'],
+        'axes.edgecolor': COLORS['grid'],
+        'axes.linewidth': 1.2,
+        'figure.facecolor': 'white',
+        'figure.dpi': 150,
+        'savefig.dpi': 150,
+        'savefig.bbox': 'tight',
+        'savefig.pad_inches': 0.2,
+    })
+
+
+def create_plot_directory():
+    """Create a timestamped directory for plot outputs."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plot_dir = f"Plot_res_{timestamp}"
+    os.makedirs(plot_dir, exist_ok=True)
+    return plot_dir
+
+
+def plot_single_gc_pie(gc_content, seq_id, plot_dir):
+    """Create a pie chart for GC content of a single sequence."""
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    at_content = 1 - gc_content
+    sizes = [gc_content * 100, at_content * 100]
+    labels = ['GC', 'AT']
+    colors = [COLORS['gc'], COLORS['at']]
+    explode = (0.02, 0.02)
+    
+    wedges, texts, autotexts = ax.pie(
+        sizes, 
+        labels=labels,
+        colors=colors,
+        explode=explode,
+        autopct='%1.1f%%',
+        startangle=90,
+        pctdistance=0.6,
+        wedgeprops={'linewidth': 2, 'edgecolor': 'white'},
+        textprops={'fontsize': 12, 'fontweight': 'bold'}
+    )
+    
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_fontweight('bold')
+        autotext.set_fontsize(14)
+    
+    ax.set_title(f'GC Content\n{seq_id}', fontsize=14, fontweight='bold', 
+                 color=COLORS['text'], pad=20)
+    
+    ax.set_aspect('equal')
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'gc_content_pie.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def plot_single_state_pie(nuclear_frac, mito_frac, seq_id, plot_dir):
+    """Create a pie chart for M/N state proportions of a single sequence."""
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    sizes = [nuclear_frac * 100, mito_frac * 100]
+    labels = ['Nuclear (N)', 'Mitochondrial (M)']
+    colors = [COLORS['nuclear'], COLORS['mitochondrial']]
+    explode = (0.02, 0.02)
+    
+    wedges, texts, autotexts = ax.pie(
+        sizes, 
+        labels=labels,
+        colors=colors,
+        explode=explode,
+        autopct='%1.1f%%',
+        startangle=90,
+        pctdistance=0.6,
+        wedgeprops={'linewidth': 2, 'edgecolor': 'white'},
+        textprops={'fontsize': 11, 'fontweight': 'bold'}
+    )
+    
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_fontweight('bold')
+        autotext.set_fontsize(14)
+    
+    ax.set_title(f'HMM State Proportions\n{seq_id}', fontsize=14, fontweight='bold',
+                 color=COLORS['text'], pad=20)
+    
+    ax.set_aspect('equal')
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'state_proportions_pie.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def plot_multi_gc_stacked_bar(results, plot_dir):
+    """Create a stacked bar chart of GC content for multiple sequences (<=100)."""
+    n_seqs = len(results)
+    # Cap figure width: min 10, max 20 inches
+    fig_width = min(20, max(10, n_seqs * 0.15))
+    fig, ax = plt.subplots(figsize=(fig_width, 6))
+    
+    seq_ids = [r['id'] for r in results]
+    gc_values = [r['gc_content'] * 100 for r in results]
+    at_values = [(1 - r['gc_content']) * 100 for r in results]
+    
+    x = np.arange(n_seqs)
+    bar_width = 0.8
+    
+    # Create stacked bars
+    ax.bar(x, gc_values, bar_width, label='GC', color=COLORS['gc'],
+           edgecolor='white', linewidth=0.3)
+    ax.bar(x, at_values, bar_width, bottom=gc_values, label='AT',
+           color=COLORS['at'], edgecolor='white', linewidth=0.3)
+    
+    ax.set_xlabel('Sequence', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_ylabel('Percentage (%)', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_title('GC/AT Content by Sequence', fontsize=14, fontweight='bold',
+                 color=COLORS['text'], pad=15)
+    
+    # X-axis labels - show fewer for readability
+    if n_seqs <= 20:
+        ax.set_xticks(x)
+        ax.set_xticklabels(seq_ids, rotation=45, ha='right', fontsize=8)
+    elif n_seqs <= 50:
+        step = max(1, n_seqs // 10)
+        ax.set_xticks(x[::step])
+        ax.set_xticklabels([seq_ids[i] for i in range(0, n_seqs, step)], 
+                          rotation=45, ha='right', fontsize=8)
+    else:
+        # For many sequences, just show index numbers
+        step = max(1, n_seqs // 10)
+        ax.set_xticks(x[::step])
+        ax.set_xticklabels([str(i+1) for i in range(0, n_seqs, step)], fontsize=8)
+        ax.set_xlabel('Sequence Index', fontsize=12, fontweight='bold', color=COLORS['text'])
+    
+    ax.set_ylim(0, 100)
+    ax.set_xlim(-0.5, n_seqs - 0.5)
+    
+    # Grid
+    ax.yaxis.grid(True, linestyle='--', alpha=0.7, color=COLORS['grid'])
+    ax.set_axisbelow(True)
+    
+    # Legend
+    ax.legend(loc='upper right', frameon=True, fancybox=True, shadow=True)
+    
+    # Add horizontal reference line at 50%
+    ax.axhline(y=50, color=COLORS['text'], linestyle=':', alpha=0.5, linewidth=1)
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'gc_content_stacked_bar.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def plot_multi_state_stacked_bar(results, plot_dir):
+    """Create a stacked bar chart of M/N state proportions for multiple sequences (<=100)."""
+    n_seqs = len(results)
+    # Cap figure width: min 10, max 20 inches
+    fig_width = min(20, max(10, n_seqs * 0.15))
+    fig, ax = plt.subplots(figsize=(fig_width, 6))
+    
+    seq_ids = [r['id'] for r in results]
+    nuclear_values = [r['nuclear_frac'] * 100 for r in results]
+    mito_values = [r['mito_frac'] * 100 for r in results]
+    
+    x = np.arange(n_seqs)
+    bar_width = 0.8
+    
+    # Create stacked bars
+    ax.bar(x, nuclear_values, bar_width, label='Nuclear (N)', 
+           color=COLORS['nuclear'], edgecolor='white', linewidth=0.3)
+    ax.bar(x, mito_values, bar_width, bottom=nuclear_values,
+           label='Mitochondrial (M)', color=COLORS['mitochondrial'],
+           edgecolor='white', linewidth=0.3)
+    
+    ax.set_xlabel('Sequence', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_ylabel('Percentage (%)', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_title('HMM State Proportions by Sequence', fontsize=14, fontweight='bold',
+                 color=COLORS['text'], pad=15)
+    
+    # X-axis labels
+    if n_seqs <= 20:
+        ax.set_xticks(x)
+        ax.set_xticklabels(seq_ids, rotation=45, ha='right', fontsize=8)
+    elif n_seqs <= 50:
+        step = max(1, n_seqs // 10)
+        ax.set_xticks(x[::step])
+        ax.set_xticklabels([seq_ids[i] for i in range(0, n_seqs, step)],
+                          rotation=45, ha='right', fontsize=8)
+    else:
+        step = max(1, n_seqs // 10)
+        ax.set_xticks(x[::step])
+        ax.set_xticklabels([str(i+1) for i in range(0, n_seqs, step)], fontsize=8)
+        ax.set_xlabel('Sequence Index', fontsize=12, fontweight='bold', color=COLORS['text'])
+    
+    ax.set_ylim(0, 100)
+    ax.set_xlim(-0.5, n_seqs - 0.5)
+    
+    # Grid
+    ax.yaxis.grid(True, linestyle='--', alpha=0.7, color=COLORS['grid'])
+    ax.set_axisbelow(True)
+    
+    # Legend
+    ax.legend(loc='upper right', frameon=True, fancybox=True, shadow=True)
+    
+    # Add horizontal reference line at 50%
+    ax.axhline(y=50, color=COLORS['text'], linestyle=':', alpha=0.5, linewidth=1)
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'state_proportions_stacked_bar.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def plot_gc_distribution(results, plot_dir):
+    """Create a horizontal stacked bar chart of GC/AT content for large datasets."""
+    n_seqs = len(results)
+    
+    # Calculate figure height based on number of sequences
+    # Minimum height of 8, scale up for more sequences, cap at reasonable size
+    fig_height = min(max(8, n_seqs * 0.04), 50)
+    fig, ax = plt.subplots(figsize=(10, fig_height))
+    
+    seq_ids = [r['id'] for r in results]
+    gc_values = [r['gc_content'] for r in results]
+    at_values = [1 - r['gc_content'] for r in results]
+    
+    y = np.arange(n_seqs)
+    bar_height = 0.8
+    
+    # Create horizontal stacked bars
+    ax.barh(y, gc_values, bar_height, label='GC', color=COLORS['gc'],
+            edgecolor='white', linewidth=0.2)
+    ax.barh(y, at_values, bar_height, left=gc_values, label='AT',
+            color=COLORS['at'], edgecolor='white', linewidth=0.2)
+    
+    ax.set_ylabel('Sequence', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_xlabel('Proportion', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_title('GC/AT Content by Sequence', fontsize=14, fontweight='bold',
+                 color=COLORS['text'], pad=15)
+    
+    # Y-axis labels - show fewer for readability
+    if n_seqs <= 50:
+        ax.set_yticks(y)
+        ax.set_yticklabels(seq_ids, fontsize=7)
+    else:
+        # For many sequences, show tick marks but fewer labels
+        step = max(1, n_seqs // 30)
+        ax.set_yticks(y[::step])
+        ax.set_yticklabels([str(i+1) for i in range(0, n_seqs, step)], fontsize=7)
+        ax.set_ylabel('Sequence Index', fontsize=12, fontweight='bold', color=COLORS['text'])
+    
+    ax.set_xlim(0, 1)
+    ax.set_ylim(-0.5, n_seqs - 0.5)
+    
+    # Invert y-axis so first sequence is at top
+    ax.invert_yaxis()
+    
+    # Grid
+    ax.xaxis.grid(True, linestyle='--', alpha=0.7, color=COLORS['grid'])
+    ax.set_axisbelow(True)
+    
+    # Legend at bottom
+    ax.legend(loc='lower right', frameon=True, fancybox=True, shadow=True)
+    
+    # Add vertical reference line at 0.5
+    ax.axvline(x=0.5, color=COLORS['text'], linestyle=':', alpha=0.5, linewidth=1)
+    
+    # Add statistics annotation
+    mean_gc = np.mean(gc_values)
+    median_gc = np.median(gc_values)
+    std_gc = np.std(gc_values)
+    
+    stats_text = f'Mean GC: {mean_gc:.1%}\nMedian GC: {median_gc:.1%}\nStd: {std_gc:.1%}\nn = {n_seqs}'
+    ax.text(0.98, 0.02, stats_text,
+           transform=ax.transAxes, fontsize=9, ha='right', va='bottom',
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.9,
+                    edgecolor=COLORS['grid']),
+           family='monospace')
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'gc_content_distribution.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def plot_state_distribution(results, plot_dir):
+    """Create a horizontal stacked bar chart of N/M state proportions for large datasets."""
+    n_seqs = len(results)
+    
+    # Calculate figure height based on number of sequences
+    fig_height = min(max(8, n_seqs * 0.04), 50)
+    fig, ax = plt.subplots(figsize=(10, fig_height))
+    
+    seq_ids = [r['id'] for r in results]
+    nuclear_values = [r['nuclear_frac'] for r in results]
+    mito_values = [r['mito_frac'] for r in results]
+    
+    y = np.arange(n_seqs)
+    bar_height = 0.8
+    
+    # Create horizontal stacked bars
+    ax.barh(y, nuclear_values, bar_height, label='Nuclear (N)', 
+            color=COLORS['nuclear'], edgecolor='white', linewidth=0.2)
+    ax.barh(y, mito_values, bar_height, left=nuclear_values,
+            label='Mitochondrial (M)', color=COLORS['mitochondrial'],
+            edgecolor='white', linewidth=0.2)
+    
+    ax.set_ylabel('Sequence', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_xlabel('Proportion', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_title('HMM State Proportions by Sequence', fontsize=14, fontweight='bold',
+                 color=COLORS['text'], pad=15)
+    
+    # Y-axis labels
+    if n_seqs <= 50:
+        ax.set_yticks(y)
+        ax.set_yticklabels(seq_ids, fontsize=7)
+    else:
+        step = max(1, n_seqs // 30)
+        ax.set_yticks(y[::step])
+        ax.set_yticklabels([str(i+1) for i in range(0, n_seqs, step)], fontsize=7)
+        ax.set_ylabel('Sequence Index', fontsize=12, fontweight='bold', color=COLORS['text'])
+    
+    ax.set_xlim(0, 1)
+    ax.set_ylim(-0.5, n_seqs - 0.5)
+    
+    # Invert y-axis so first sequence is at top
+    ax.invert_yaxis()
+    
+    # Grid
+    ax.xaxis.grid(True, linestyle='--', alpha=0.7, color=COLORS['grid'])
+    ax.set_axisbelow(True)
+    
+    # Legend
+    ax.legend(loc='lower right', frameon=True, fancybox=True, shadow=True)
+    
+    # Add classification threshold line at 0.5
+    ax.axvline(x=0.5, color=COLORS['text'], linestyle='-', linewidth=1.5, alpha=0.7,
+               label='Classification threshold')
+    
+    # Add statistics annotation
+    mean_nuc = np.mean(nuclear_values)
+    median_nuc = np.median(nuclear_values)
+    n_nuclear = sum(1 for r in results if r['call'] == 'nuclear')
+    n_mito = sum(1 for r in results if r['call'] == 'mitochondrial')
+    
+    stats_text = f'Mean N: {mean_nuc:.1%}\nMedian N: {median_nuc:.1%}\nClassified N: {n_nuclear}\nClassified M: {n_mito}'
+    ax.text(0.98, 0.02, stats_text,
+           transform=ax.transAxes, fontsize=9, ha='right', va='bottom',
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.9,
+                    edgecolor=COLORS['grid']),
+           family='monospace')
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'state_proportions_distribution.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def plot_classification_counts(results, plot_dir):
+    """Create a bar chart showing count of sequences classified as M or N."""
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    calls = [r['call'] for r in results]
+    nuclear_count = sum(1 for c in calls if c == 'nuclear')
+    mito_count = sum(1 for c in calls if c == 'mitochondrial')
+    
+    categories = ['Nuclear (N)', 'Mitochondrial (M)']
+    counts = [nuclear_count, mito_count]
+    colors = [COLORS['nuclear'], COLORS['mitochondrial']]
+    
+    bars = ax.bar(categories, counts, color=colors, edgecolor='white', linewidth=2,
+                  width=0.6)
+    
+    # Add value labels on bars
+    for bar, count in zip(bars, counts):
+        height = bar.get_height()
+        ax.annotate(f'{count}',
+                   xy=(bar.get_x() + bar.get_width() / 2, height),
+                   xytext=(0, 5),
+                   textcoords="offset points",
+                   ha='center', va='bottom',
+                   fontsize=14, fontweight='bold', color=COLORS['text'])
+    
+    ax.set_xlabel('Classification', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_ylabel('Number of Sequences', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_title('Classification Summary', fontsize=14, fontweight='bold',
+                 color=COLORS['text'], pad=15)
+    
+    # Grid
+    ax.yaxis.grid(True, linestyle='--', alpha=0.7, color=COLORS['grid'])
+    ax.set_axisbelow(True)
+    
+    # Set y-axis to start at 0
+    ax.set_ylim(0, max(counts) * 1.15 if max(counts) > 0 else 1)
+    
+    # Add percentage annotation
+    total = nuclear_count + mito_count
+    if total > 0:
+        nuc_pct = nuclear_count / total * 100
+        mito_pct = mito_count / total * 100
+        ax.text(0.98, 0.95, f'N: {nuc_pct:.1f}%  |  M: {mito_pct:.1f}%',
+               transform=ax.transAxes, fontsize=10, ha='right', va='top',
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8,
+                        edgecolor=COLORS['grid']))
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'classification_counts.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def plot_loglikelihood_distribution(results, plot_dir):
+    """Create a histogram of log-likelihood values."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    logliks = [r['loglik'] for r in results]
+    
+    # Determine number of bins
+    n_bins = min(50, max(10, len(logliks) // 5))
+    
+    # Create histogram
+    n, bins, patches = ax.hist(logliks, bins=n_bins, color=COLORS['nuclear'],
+                               edgecolor='white', linewidth=0.8, alpha=0.85)
+    
+    # Add a gradient effect by coloring bins
+    cm = plt.cm.get_cmap('Blues')
+    bin_centers = 0.5 * (bins[:-1] + bins[1:])
+    col = (bin_centers - bin_centers.min()) / (bin_centers.max() - bin_centers.min() + 1e-10)
+    for c, p in zip(col, patches):
+        plt.setp(p, 'facecolor', cm(0.3 + c * 0.5))
+    
+    ax.set_xlabel('Log-Likelihood', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_ylabel('Frequency', fontsize=12, fontweight='bold', color=COLORS['text'])
+    ax.set_title('Distribution of Log-Likelihood Values', fontsize=14, fontweight='bold',
+                 color=COLORS['text'], pad=15)
+    
+    # Grid
+    ax.yaxis.grid(True, linestyle='--', alpha=0.7, color=COLORS['grid'])
+    ax.set_axisbelow(True)
+    
+    # Add statistics annotation
+    mean_ll = np.mean(logliks)
+    median_ll = np.median(logliks)
+    std_ll = np.std(logliks)
+    
+    stats_text = f'Mean: {mean_ll:.2f}\nMedian: {median_ll:.2f}\nStd: {std_ll:.2f}\nn = {len(logliks)}'
+    ax.text(0.98, 0.95, stats_text,
+           transform=ax.transAxes, fontsize=10, ha='right', va='top',
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.9,
+                    edgecolor=COLORS['grid']),
+           family='monospace')
+    
+    # Add vertical lines for mean and median
+    ax.axvline(mean_ll, color=COLORS['mitochondrial'], linestyle='--', linewidth=2,
+               label=f'Mean ({mean_ll:.2f})')
+    ax.axvline(median_ll, color=COLORS['gc'], linestyle=':', linewidth=2,
+               label=f'Median ({median_ll:.2f})')
+    
+    ax.legend(loc='upper left', frameon=True, fancybox=True, shadow=True)
+    
+    plt.tight_layout()
+    filepath = op.join(plot_dir, 'loglikelihood_distribution.png')
+    plt.savefig(filepath, facecolor='white', edgecolor='none')
+    plt.close()
+    return filepath
+
+
+def generate_plots(results, plot_dir):
+    """
+    Generate all plots based on number of sequences.
+    
+    Args:
+        results: List of dictionaries with sequence results
+        plot_dir: Directory to save plots
+    
+    Returns:
+        List of generated file paths
+    """
+    setup_plot_style()
+    generated_files = []
+    n_seqs = len(results)
+    
+    if n_seqs == 1:
+        # Single sequence: pie charts
+        r = results[0]
+        
+        # GC content pie chart
+        filepath = plot_single_gc_pie(r['gc_content'], r['id'], plot_dir)
+        generated_files.append(filepath)
+        
+        # State proportions pie chart
+        filepath = plot_single_state_pie(r['nuclear_frac'], r['mito_frac'], r['id'], plot_dir)
+        generated_files.append(filepath)
+        
+    elif n_seqs <= MAX_SEQS_FOR_BAR_CHART:
+        # Moderate number of sequences: stacked bar charts
+        
+        # GC content stacked bar chart
+        filepath = plot_multi_gc_stacked_bar(results, plot_dir)
+        generated_files.append(filepath)
+        
+        # State proportions stacked bar chart
+        filepath = plot_multi_state_stacked_bar(results, plot_dir)
+        generated_files.append(filepath)
+        
+        # Classification counts
+        filepath = plot_classification_counts(results, plot_dir)
+        generated_files.append(filepath)
+        
+        # Log-likelihood distribution
+        filepath = plot_loglikelihood_distribution(results, plot_dir)
+        generated_files.append(filepath)
+        
+    else:
+        # Large dataset: use distribution plots instead of per-sequence bars
+        print(f"[INFO] Large dataset ({n_seqs} sequences) - using distribution plots", 
+              file=sys.stderr)
+        
+        # GC content distribution histogram
+        filepath = plot_gc_distribution(results, plot_dir)
+        generated_files.append(filepath)
+        
+        # State proportions distribution histogram
+        filepath = plot_state_distribution(results, plot_dir)
+        generated_files.append(filepath)
+        
+        # Classification counts
+        filepath = plot_classification_counts(results, plot_dir)
+        generated_files.append(filepath)
+        
+        # Log-likelihood distribution
+        filepath = plot_loglikelihood_distribution(results, plot_dir)
+        generated_files.append(filepath)
+    
+    return generated_files
+
+
 # -------------------- Main -------------------- #
 
 def main():
@@ -304,6 +894,14 @@ def main():
         help="Emit decoded path per sequence."
     )
     
+    # Visualization option
+    ap.add_argument(
+        "--plotting",
+        action="store_true",
+        help="Generate visualization plots. Creates a timestamped 'Plot_res_*' folder "
+             "with charts showing GC content, state proportions, and classification results."
+    )
+    
     # Memory tracking option - only enabled when explicitly set
     ap.add_argument(
         "--track_memory",
@@ -321,6 +919,12 @@ def main():
     for p in (args.model_json, args.vocab_json, args.states_json):
         if not op.exists(p):
             raise SystemExit(f"File not found: {p}")
+    
+    # Check matplotlib availability if plotting requested
+    if args.plotting and not MATPLOTLIB_AVAILABLE:
+        print("[WARNING] matplotlib not available. Plotting disabled.", file=sys.stderr)
+        print("[WARNING] Install with: pip install matplotlib", file=sys.stderr)
+        args.plotting = False
     
     # -------------------- Start timing -------------------- #
     start_time = time.time()
@@ -341,6 +945,9 @@ def main():
     # Track processing statistics
     n_processed = 0
     n_skipped = 0
+    
+    # Collect results for plotting
+    plot_results = []
     
     with open(args.out_tsv, "w") as fo:
         
@@ -374,6 +981,31 @@ def main():
             if args.emit_path:
                 path_str = " ".join(map(str, path.tolist()))
                 fo.write(f"#{rid}_PATH\t{path_str}\n")
+            
+            # Collect data for plotting
+            if args.plotting:
+                gc_content = calculate_gc_content(raw)
+                plot_results.append({
+                    'id': rid,
+                    'loglik': ll,
+                    'nuclear_frac': summ['nuclear_frac'],
+                    'mito_frac': summ['mito_frac'],
+                    'call': summ['call'],
+                    'gc_content': gc_content
+                })
+    
+    # -------------------- Generate plots if requested -------------------- #
+    if args.plotting and plot_results:
+        plot_dir = create_plot_directory()
+        print(f"[INFO] Generating plots in: {plot_dir}", file=sys.stderr)
+        
+        generated_files = generate_plots(plot_results, plot_dir)
+        
+        print(f"[OK] Generated {len(generated_files)} plot(s):", file=sys.stderr)
+        for f in generated_files:
+            print(f"     - {f}", file=sys.stderr)
+    elif args.plotting and not plot_results:
+        print("[WARNING] No sequences processed, skipping plot generation.", file=sys.stderr)
     
     # -------------------- End timing -------------------- #
     end_time = time.time()

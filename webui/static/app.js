@@ -3,6 +3,8 @@ const statusEl = document.getElementById("status");
 const resultsCard = document.getElementById("results-card");
 const tableBody = document.querySelector("#results-table tbody");
 const pathsEl = document.getElementById("paths");
+const plotsSection = document.getElementById("plots-section");
+const plotsGrid = document.getElementById("plots-grid");
 // Species selection removed (human only)
 const summaryEl = document.getElementById("results-summary");
 const sequenceField = document.getElementById("sequence_text");
@@ -12,24 +14,44 @@ const fastaInput = document.getElementById("fasta_file");
 const fastaLoadedBadge = document.getElementById("fasta-loaded-badge");
 const lenHeader = document.getElementById("len-header");
 const modeRadios = document.querySelectorAll("input[name='mode']");
+const plottingInput = document.getElementById("plotting");
 // Min length and method selection removed
 const downloadBtn = document.getElementById("download-results");
 const downloadMenu = document.getElementById("download-menu");
+const helpBtn = document.getElementById("help-btn");
+const helpModal = document.getElementById("help-modal");
+const helpClose = document.getElementById("help-close");
 
 const DEMO_SEQUENCE =
   "ATA CCC ATG GCC AAC CTC CTA CTC CTC ATT GTA CCC ATT CTA ATC GCA ATG GCA TTC CTA ATG CTT ACC GAA CGA AAA ATT CTA GGC TAT ATA CAA CTA CGC AAA GGC CCC AAC GTT GTA GGC CCC TAC GGG CTA CTA CAA CCC TTC GCT GAC GCC ATA AAA CTC TTC ACC AAA GAG CCC CTA AAA CCC GCC ACA TCT ACC ATC ACC CTC TAC ATC ACC GCC CCG ACC TTA GCT CTC ACC ATC GCT CTT CTA CTA TGA ACC CCC CTC CCC ATA CCC AAC CCC CTG GTC AAC CTC AAC CTA GGC CTC CTA TTT ATT CTA GCC ACC TCT AGC CTA GCC GTT TAC TCA ATC CTC TGA TCA GGG TGA GCA TCA AAC TCA AAC TAC GCC CTG ATC GGC GCA CTG CGA GCA GTA GCC CAA ACA ATC TCA TAT GAA GTC ACC CTA GCC ATC ATT CTA CTA TCA ACA TTA CTA ATA AGT GGC TCC TTT AAC CTC TCC ACC CTT ATC ACA ACA CAA GAA CAC CTC TGA TTA CTC CTG CCA TCA TGA CCC TTG GCC ATA ATA TGA TTT ATC TCC ACA CTA GCA GAG ACC AAC CGA ACC CCC TTC GAC CTT GCC GAA GGG GAG TCC GAA CTA GTC TCA GGC TTC AAC ATC GAA TAC GCC GCA GGC CCC TTC GCC CTA TTC TTC ATA GCC GAA TAC ACA AAC ATT ATT ATA ATA AAC ACC CTC ACC ACT ACA ATC TTC CTA GGA ACA ACA TAT GAC GCA CTC TCC CCT GAA CTC TAC ACA ACA TAT TTT GTC ACC AAG ACC CTA CTT CTA ACC TCC CTG TTC TTA TGA ATT CGA ACA GCA TAC CCC CGA TTC CGC TAC GAC CAA CTC ATA CAC CTC CTA TGA AAA AAC TTC CTA CCA CTC ACC CTA GCA TTA CTT ATA TGA TAT GTC TCC ATA CCC ATT ACA ATC TCC AGC ATT CCC CCT CAA ACC";
 
 if (demoButton && sequenceField) {
   demoButton.addEventListener("click", () => {
+    // If a demo FASTA or user file is loaded, unload it and remove the badge
+    if ((typeof DEMO_FASTA_FILE !== 'undefined' && DEMO_FASTA_FILE && (!fastaInput || !fastaInput.files || fastaInput.files.length === 0)) ||
+        (fastaInput && fastaInput.files && fastaInput.files.length > 0)) {
+      if (fastaInput) fastaInput.value = "";
+      if (typeof DEMO_FASTA_FILE !== 'undefined') DEMO_FASTA_FILE = null;
+      if (fastaLoadedBadge) fastaLoadedBadge.hidden = true;
+      setStatus("Loaded FASTA was cleared to use the demo sequence.", "warning");
+    } else {
+      setStatus("Demo data loaded. Adjust parameters or run decode.", "info");
+    }
     sequenceField.value = DEMO_SEQUENCE;
+    if (typeof DEMO_SEQUENCE_LOADED !== 'undefined') DEMO_SEQUENCE_LOADED = true;
     sequenceField.focus();
-    setStatus("Demo data loaded. Adjust parameters or run decode.", "info");
   });
 }
 
 let DEMO_FASTA_FILE = null;
+let DEMO_SEQUENCE_LOADED = false;
 if (demoFastaButton) {
   demoFastaButton.addEventListener("click", async () => {
+    // Block loading demo FASTA if the demo sequence is loaded
+    if (DEMO_SEQUENCE_LOADED) {
+      setStatus("Clear the loaded demo sequence to load FASTA.", "warning");
+      return;
+    }
     try {
       const res = await fetch("/static/Rickettsia_prowazekii_str_Madrid_E.fa");
       if (!res.ok) throw new Error("Failed to fetch demo FASTA");
@@ -47,6 +69,17 @@ if (demoFastaButton) {
 if (fastaInput) {
   fastaInput.addEventListener("change", () => {
     if (fastaLoadedBadge) fastaLoadedBadge.hidden = !(fastaInput.files && fastaInput.files.length > 0);
+    // Selecting a file should clear in-memory demo FASTA
+    if (fastaInput.files && fastaInput.files.length > 0) {
+      DEMO_FASTA_FILE = null;
+    }
+  });
+}
+
+// Track whether the textarea contains the demo sequence
+if (sequenceField) {
+  sequenceField.addEventListener("input", () => {
+    DEMO_SEQUENCE_LOADED = sequenceField.value.trim() === DEMO_SEQUENCE.trim();
   });
 }
 
@@ -226,6 +259,10 @@ form.addEventListener("submit", async (event) => {
   if (DEMO_FASTA_FILE && fastaInput && (!fastaInput.files || fastaInput.files.length === 0)) {
     fd.set("fasta_file", DEMO_FASTA_FILE);
   }
+  // include plotting flag
+  if (plottingInput) {
+    fd.set("plotting", plottingInput.checked ? "true" : "false");
+  }
 
   setStatus("Submitting job…", "pending");
   resultsCard.hidden = true;
@@ -246,9 +283,7 @@ form.addEventListener("submit", async (event) => {
     }
 
     LAST_RESULT = data;
-    renderTable(data.records);
-    renderPaths(data.paths || []);
-    renderSummary(data.records);
+    afterDecode(data);
     resultsCard.hidden = false;
     // Suppress raw decoder stdout; show concise status only
     setStatus("Results ready.", "success");
@@ -269,7 +304,10 @@ form.addEventListener("reset", () => {
   if (downloadMenu) downloadMenu.hidden = true;
   LAST_RESULT = null;
   DEMO_FASTA_FILE = null;
+  DEMO_SEQUENCE_LOADED = false;
   if (fastaLoadedBadge) fastaLoadedBadge.hidden = true;
+  if (plotsSection) plotsSection.hidden = true;
+  if (plotsGrid) plotsGrid.innerHTML = "";
   if (summaryEl) {
     summaryEl.hidden = true;
     summaryEl.textContent = "";
@@ -347,6 +385,89 @@ function buildCSV(data) {
   return rows.join("\n") + "\n";
 }
 
+// ----- Plots rendering and lightbox -----
+function buildPlotURL(relPath) {
+  // Backend serves plots via /api/plots/<relpath>
+  return `/api/plots/${encodeURI(relPath)}`;
+}
+
+function renderPlots(plots = []) {
+  if (!plotsSection || !plotsGrid) return;
+  plotsGrid.innerHTML = "";
+  if (!plots.length) {
+    plotsSection.hidden = true;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const p of plots) {
+    const card = document.createElement("div");
+    card.className = "plot-card";
+    const img = document.createElement("img");
+    img.className = "plot-thumb";
+    img.src = buildPlotURL(p);
+    img.alt = p.split("/").pop() || "plot";
+    img.loading = "lazy";
+    img.addEventListener("click", () => openLightbox(img.src, img.alt));
+    const cap = document.createElement("div");
+    cap.className = "plot-caption";
+    cap.textContent = img.alt;
+    card.appendChild(img);
+    card.appendChild(cap);
+    frag.appendChild(card);
+  }
+  plotsGrid.appendChild(frag);
+  plotsSection.hidden = false;
+}
+
+const lightbox = document.getElementById("lightbox");
+const lightboxImg = document.getElementById("lightbox-img");
+const lightboxCaption = document.getElementById("lightbox-caption");
+const lightboxClose = document.getElementById("lightbox-close");
+const lightboxDownload = document.getElementById("lightbox-download");
+
+function openLightbox(src, caption) {
+  if (!lightbox || !lightboxImg) return;
+  lightboxImg.src = src;
+  lightboxImg.alt = caption || "plot";
+  if (lightboxCaption) lightboxCaption.textContent = caption || "";
+  lightbox.setAttribute("aria-hidden", "false");
+}
+
+function closeLightbox() {
+  if (!lightbox) return;
+  lightbox.setAttribute("aria-hidden", "true");
+  if (lightboxImg) lightboxImg.src = "";
+}
+
+if (lightboxClose) lightboxClose.addEventListener("click", closeLightbox);
+if (lightbox) lightbox.addEventListener("click", (e) => {
+  if (e.target === lightbox) closeLightbox();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLightbox();
+});
+
+if (lightboxDownload) {
+  lightboxDownload.addEventListener("click", () => {
+    if (!lightboxImg || !lightboxImg.src) return;
+    const a = document.createElement("a");
+    a.href = lightboxImg.src;
+    const name = lightboxImg.alt && lightboxImg.alt !== "plot" ? lightboxImg.alt : `plot_${Date.now()}.png`;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+}
+
+// Integrate into existing result flow
+function afterDecode(result) {
+  renderTable(result.records);
+  renderPaths(result.paths || []);
+  renderSummary(result.records);
+  renderPlots(result.plots || []);
+}
+
 function triggerDownload(content, filename, mime) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -391,3 +512,19 @@ if (downloadMenu) {
     if (!within) downloadMenu.hidden = true;
   });
 }
+
+// Help modal handlers
+function openHelp() {
+  if (helpModal) helpModal.setAttribute("aria-hidden", "false");
+}
+function closeHelp() {
+  if (helpModal) helpModal.setAttribute("aria-hidden", "true");
+}
+if (helpBtn) helpBtn.addEventListener("click", openHelp);
+if (helpClose) helpClose.addEventListener("click", closeHelp);
+if (helpModal) helpModal.addEventListener("click", (e) => {
+  if (e.target === helpModal) closeHelp();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeHelp();
+});
