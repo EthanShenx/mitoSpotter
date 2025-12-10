@@ -7,13 +7,11 @@ def load_ids(p):
     return set(x.strip() for x in open(p) if x.strip())
 
 def main():
-    ap = argparse.ArgumentParser(description="Split FASTA (cDNA/CDS) by mito/nuclear transcript IDs.")
-    ap.add_argument("--fasta", required=True, help="Input FASTA (cDNA or CDS).")
+    ap = argparse.ArgumentParser(description="Split CDS FASTA by mito/nuclear transcript IDs.")
+    ap.add_argument("--fasta", required=True, help="Input CDS FASTA file.")
     ap.add_argument("--mito_ids", required=True, help="File containing mitochondrial transcript IDs.")
     ap.add_argument("--nuc_ids", required=True, help="File containing nuclear transcript IDs.")
     ap.add_argument("--outdir", required=True, help="Directory to write output files.")
-    ap.add_argument("--mode", required=True, choices=["cdna","cds"],
-                    help="Specify whether input FASTA is cDNA or CDS.")
     ap.add_argument(
         "--prefix",
         default="",
@@ -26,13 +24,9 @@ def main():
     mito_ids = load_ids(args.mito_ids)
     nuc_ids  = load_ids(args.nuc_ids)
 
-    # Output filenames depend on mode, plus optional prefix
-    if args.mode == "cdna":
-        mito_name = args.prefix + "mito_cdna.fa"
-        nuc_name  = args.prefix + "nuclear_cdna.fa"
-    else:  # cds
-        mito_name = args.prefix + "mito_cds.fa"
-        nuc_name  = args.prefix + "nuclear_cds.fa"
+    # Output filenames with optional prefix
+    mito_name = args.prefix + "mito_cds.fa"
+    nuc_name  = args.prefix + "nuclear_cds.fa"
 
     mito_out = os.path.join(args.outdir, mito_name)
     nuc_out  = os.path.join(args.outdir, nuc_name)
@@ -53,7 +47,6 @@ def main():
     fm.close()
     fn.close()
 
-    print(f"[OK] mode = {args.mode}")
     print(f"[OK] mito sequences: {km} -> {mito_out}")
     print(f"[OK] nuclear sequences: {kn} -> {nuc_out}")
 
