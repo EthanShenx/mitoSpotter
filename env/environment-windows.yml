@@ -8,4 +8,7 @@ dependencies:
   - biopython==1.83
   - tqdm==4.66.1
   - flask==2.3.3
-  - gunicorn==21.2.0
+  - pandas==2.3.3
+  - ipython==8.30.0
+  - matplotlib==3.10.7
+  - ipykernel==6.31.0
