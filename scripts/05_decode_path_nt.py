@@ -6,6 +6,7 @@ Accepts explicit --model_json, --vocab_json, --states_json paths
 for benchmarking custom-trained models.
 """
 
+# -------------------- Standard Library Imports -------------------- #
 import argparse
 import json
 import os
@@ -15,11 +16,11 @@ import sys
 import time
 from datetime import datetime
 import numpy as np
-from Bio import SeqIO
+from Bio import SeqIO  # BioPython for FASTA parsing
 
 # Optional memory tracking - only used when explicitly requested
 try:
-    import tracemalloc
+    import tracemalloc  # Python built-in memory profiler
     TRACEMALLOC_AVAILABLE = True
 except ImportError:
     TRACEMALLOC_AVAILABLE = False
@@ -33,15 +34,18 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
 # Nucleotide vocabulary
+# Standard DNA bases used for sequence encoding
 BASES = ["A", "C", "G", "T"]
 
 # Maximum number of sequences for per-sequence bar charts
+# Beyond this threshold, distribution plots are used instead
 MAX_SEQS_FOR_BAR_CHART = 100
 
 
 # -------------------- Color Palette -------------------- #
 
 # Professional color scheme
+# Defines consistent colors for all visualizations
 COLORS = {
     'nuclear': '#1F78B4',       # Blue
     'mitochondrial': '#E31A1C', # Red
@@ -57,11 +61,13 @@ COLORS = {
 
 def format_timestamp(ts):
     """Format a timestamp as a human-readable string."""
+    # Convert Unix timestamp to formatted datetime string
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def format_duration(seconds):
     """Format duration in seconds to a human-readable string."""
+    # Handle different time scales appropriately
     if seconds < 60:
         return f"{seconds:.2f} seconds"
     elif seconds < 3600:
@@ -77,6 +83,7 @@ def format_duration(seconds):
 
 def format_memory(bytes_value):
     """Format memory size in bytes to a human-readable string."""
+    # Scale to appropriate unit (B, KB, MB, GB)
     if bytes_value < 1024:
         return f"{bytes_value} B"
     elif bytes_value < 1024 ** 2:
@@ -112,6 +119,7 @@ def report_memory(peak_memory):
 
 def clean_nt(s):
     """Clean nucleotide string: uppercase, replace U->T, keep only A/C/G/T."""
+    # Convert to uppercase, handle RNA (U->T), remove non-standard bases
     return re.sub(r"[^ACGT]", "", str(s).upper().replace("U", "T"))
 
 
@@ -120,26 +128,28 @@ def calculate_gc_content(sequence):
     s = clean_nt(sequence)
     if len(s) == 0:
         return 0.0
+    # Count G and C bases, divide by total length
     gc_count = s.count('G') + s.count('C')
     return gc_count / len(s)
 
 
 def load_model(model_json, vocab_json):
     """Load HMM parameters pi, A, B from JSON."""
+    # Load model file containing HMM parameters
     M = json.load(open(model_json))
-    pi = np.array(M["startprob"], dtype=np.float64)
-    A = np.array(M["transmat"], dtype=np.float64)
-    B = np.array(M["emissionprob"], dtype=np.float64)
+    pi = np.array(M["startprob"], dtype=np.float64)   # Initial state distribution
+    A = np.array(M["transmat"], dtype=np.float64)     # State transition matrix
+    B = np.array(M["emissionprob"], dtype=np.float64) # Emission probability matrix
     
-    # Load vocabulary mapping
+    # Load vocabulary mapping (symbol -> index)
     vocab_data = json.load(open(vocab_json))
-    if "bases" in vocab_data:  # 1-nt model
+    if "bases" in vocab_data:  # 1-nt model (monomers)
         idx = {b: i for i, b in enumerate(vocab_data["bases"])}
-    elif "dinucs" in vocab_data:  # 2-nt model
+    elif "dinucs" in vocab_data:  # 2-nt model (dimers)
         idx = {d: i for i, d in enumerate(vocab_data["dinucs"])}
-    elif "trinucs" in vocab_data:  # 3-nt model
+    elif "trinucs" in vocab_data:  # 3-nt model (trimers/codons)
         idx = {t: i for i, t in enumerate(vocab_data["trinucs"])}
-    else:  # Fallback
+    else:  # Fallback to generic index
         idx = vocab_data.get("index", {})
 
     return pi, A, B, idx
@@ -147,9 +157,11 @@ def load_model(model_json, vocab_json):
 
 def load_states(p):
     """Load state name mapping, and resolve nuclear/mitochondrial IDs."""
+    # Load state index to name mapping
     S = json.load(open(p))
-    S = {int(k): v for k, v in S.items()}
-    inv = {v: k for k, v in S.items()}
+    S = {int(k): v for k, v in S.items()}  # Ensure integer keys
+    inv = {v: k for k, v in S.items()}     # Create inverse mapping (name -> id)
+    # Get state IDs with defaults
     nuc_id = inv.get("nuclear", 0)
     mito_id = inv.get("mitochondrial", 1)
     return S, nuc_id, mito_id
@@ -165,26 +177,35 @@ def viterbi(pi, A, B, obs):
         viterbi_ll: log-likelihood of best path
         path: state sequence
     """
-    T = len(obs)
-    N = A.shape[0]
+    T = len(obs)   # Sequence length
+    N = A.shape[0] # Number of states
+    
+    # Convert to log-space to avoid numerical underflow
+    # Add small epsilon (1e-300) to prevent log(0)
     logA = np.log(A + 1e-300)
     logB = np.log(B + 1e-300)
     logpi = np.log(pi + 1e-300)
     
+    # d[t,j] = max log-probability of ending in state j at time t
     d = np.zeros((T, N))
+    # psi[t,j] = argmax state at t-1 that leads to j at time t (for backtracking)
     psi = np.zeros((T, N), dtype=np.int64)
     
+    # Initialize: first observation
     d[0] = logpi + logB[:, obs[0]]
-    psi[0] = -1
+    psi[0] = -1  # No predecessor for first state
     
+    # Forward pass: recursively compute best path to each state
     for t in range(1, T):
         for j in range(N):
+            # Find best predecessor state
             s = d[t-1] + logA[:, j]
             psi[t, j] = int(np.argmax(s))
             d[t, j] = s[psi[t, j]] + logB[j, obs[t]]
     
+    # Backtracking: reconstruct optimal path
     path = np.zeros(T, dtype=np.int64)
-    path[-1] = int(np.argmax(d[-1]))
+    path[-1] = int(np.argmax(d[-1]))  # Start from best final state
     for t in range(T-2, -1, -1):
         path[t] = psi[t+1, path[t+1]]
     
@@ -198,21 +219,27 @@ def forward_ll(pi, A, B, obs):
     Returns:
         ll: log-likelihood of the observation sequence
     """
-    T = len(obs)
-    N = A.shape[0]
+    T = len(obs)   # Sequence length
+    N = A.shape[0] # Number of states
     
+    # alpha[t,j] = scaled probability of being in state j at time t
     alpha = np.zeros((T, N), dtype=np.float64)
+    # c[t] = scaling factor at time t (sum of unscaled alpha values)
     c = np.zeros(T, dtype=np.float64)
     
+    # Initialize with first observation
     alpha[0] = pi * B[:, obs[0]]
-    c[0] = alpha[0].sum() or 1e-300
-    alpha[0] /= c[0]
+    c[0] = alpha[0].sum() or 1e-300  # Prevent division by zero
+    alpha[0] /= c[0]  # Normalize
     
+    # Forward pass with scaling
     for t in range(1, T):
+        # alpha[t] = (sum over prev states) * emission prob
         alpha[t] = (alpha[t-1] @ A) * B[:, obs[t]]
         c[t] = alpha[t].sum() or 1e-300
-        alpha[t] /= c[t]
+        alpha[t] /= c[t]  # Normalize to prevent underflow
     
+    # Log-likelihood is sum of log scaling factors
     return float(np.sum(np.log(c + 1e-300)))
 
 
@@ -228,10 +255,13 @@ def summarize_viterbi(path, nuc_id=0, mito_id=1, state_names=None):
     if len(path) == 0:
         return {"nuclear_frac": 0.0, "mito_frac": 0.0, "call": "NA"}
     
+    # Calculate fraction of time spent in each state
     nuc = float(np.mean(path == nuc_id))
     mito = float(np.mean(path == mito_id))
+    # Winner is state with higher fraction
     winner_id = nuc_id if nuc >= mito else mito_id
     
+    # Resolve state name
     name = state_names.get(
         winner_id,
         "nuclear" if winner_id == nuc_id else "mitochondrial"
@@ -250,8 +280,10 @@ def summarize_viterbi(path, nuc_id=0, mito_id=1, state_names=None):
 
 def iter_inputs(args):
     """Iterate over all input sequences based on CLI options."""
+    # Handle --seq arguments (direct sequence strings)
     if args.seq:
         for i, s in enumerate(args.seq, 1):
+            # Use provided seq_id if available, else generate default
             sid = (
                 args.seq_id[i-1]
                 if args.seq_id and i <= len(args.seq_id)
@@ -259,11 +291,13 @@ def iter_inputs(args):
             )
             yield sid, s
     
+    # Handle stdin input
     if args.stdin:
         raw = sys.stdin.read()
         if raw:
             yield args.stdin_id, raw
     
+    # Handle FASTA file input
     if args.fasta:
         for rec in SeqIO.parse(args.fasta, "fasta"):
             yield rec.id, str(rec.seq)
@@ -281,16 +315,21 @@ def sequence_to_observations(sequence, ngram, vocab_idx):
     s = clean_nt(sequence)
     nt_length = len(s)
     
+    # Tokenize based on n-gram size
     if ngram == 1:
+        # Monomers: each base is a token
         tokens = list(s)
     elif ngram == 2:
+        # Dimers: sliding window of 2 bases
         tokens = [s[i:i+2] for i in range(len(s)-1)]
     elif ngram == 3:
-        L = (len(s)//3) * 3
+        # Trimers: non-overlapping triplets (codon-like)
+        L = (len(s)//3) * 3  # Truncate to multiple of 3
         tokens = [s[i:i+3] for i in range(0, L, 3)]
     else:
         tokens = list(s)
 
+    # Convert tokens to vocabulary indices, skip unknown tokens
     obs = [vocab_idx[t] for t in tokens if t in vocab_idx]
     return np.array(obs, dtype=np.int64), len(tokens), nt_length
 
@@ -299,6 +338,7 @@ def sequence_to_observations(sequence, ngram, vocab_idx):
 
 def setup_plot_style():
     """Configure matplotlib for professional-looking plots."""
+    # Set global matplotlib parameters
     plt.rcParams.update({
         'font.family': 'sans-serif',
         'font.size': 11,
@@ -328,12 +368,14 @@ def plot_single_gc_pie(gc_content, seq_id, plot_dir):
     """Create a pie chart for GC content of a single sequence."""
     fig, ax = plt.subplots(figsize=(8, 6))
     
+    # Calculate AT content as complement of GC
     at_content = 1 - gc_content
     sizes = [gc_content * 100, at_content * 100]
     labels = ['GC', 'AT']
     colors = [COLORS['gc'], COLORS['at']]
-    explode = (0.02, 0.02)
+    explode = (0.02, 0.02)  # Slight separation between slices
     
+    # Create pie chart with percentage labels
     wedges, texts, autotexts = ax.pie(
         sizes, 
         labels=labels,
@@ -346,6 +388,7 @@ def plot_single_gc_pie(gc_content, seq_id, plot_dir):
         textprops={'fontsize': 12, 'fontweight': 'bold'}
     )
     
+    # Style percentage labels
     for autotext in autotexts:
         autotext.set_color('white')
         autotext.set_fontweight('bold')
@@ -354,7 +397,7 @@ def plot_single_gc_pie(gc_content, seq_id, plot_dir):
     ax.set_title(f'GC Content\n{seq_id}', fontsize=14, fontweight='bold', 
                  color=COLORS['text'], pad=20)
     
-    ax.set_aspect('equal')
+    ax.set_aspect('equal')  # Ensure circular pie
     
     plt.tight_layout()
     filepath = op.join(plot_dir, 'gc_content_pie.png')
@@ -408,6 +451,7 @@ def plot_multi_gc_stacked_bar(results, plot_dir):
     fig_width = min(20, max(10, n_seqs * 0.15))
     fig, ax = plt.subplots(figsize=(fig_width, 6))
     
+    # Extract data from results
     seq_ids = [r['id'] for r in results]
     gc_values = [r['gc_content'] * 100 for r in results]
     at_values = [(1 - r['gc_content']) * 100 for r in results]
@@ -415,7 +459,7 @@ def plot_multi_gc_stacked_bar(results, plot_dir):
     x = np.arange(n_seqs)
     bar_width = 0.8
     
-    # Create stacked bars
+    # Create stacked bars: GC on bottom, AT on top
     ax.bar(x, gc_values, bar_width, label='GC', color=COLORS['gc'],
            edgecolor='white', linewidth=0.3)
     ax.bar(x, at_values, bar_width, bottom=gc_values, label='AT',
@@ -426,7 +470,7 @@ def plot_multi_gc_stacked_bar(results, plot_dir):
     ax.set_title('GC/AT Content by Sequence', fontsize=14, fontweight='bold',
                  color=COLORS['text'], pad=15)
     
-    # X-axis labels - show fewer for readability
+    # X-axis labels - show fewer for readability based on count
     if n_seqs <= 20:
         ax.set_xticks(x)
         ax.set_xticklabels(seq_ids, rotation=45, ha='right', fontsize=8)
@@ -469,6 +513,7 @@ def plot_multi_state_stacked_bar(results, plot_dir):
     fig_width = min(20, max(10, n_seqs * 0.15))
     fig, ax = plt.subplots(figsize=(fig_width, 6))
     
+    # Extract data from results
     seq_ids = [r['id'] for r in results]
     nuclear_values = [r['nuclear_frac'] * 100 for r in results]
     mito_values = [r['mito_frac'] * 100 for r in results]
@@ -476,7 +521,7 @@ def plot_multi_state_stacked_bar(results, plot_dir):
     x = np.arange(n_seqs)
     bar_width = 0.8
     
-    # Create stacked bars
+    # Create stacked bars: Nuclear on bottom, Mitochondrial on top
     ax.bar(x, nuclear_values, bar_width, label='Nuclear (N)', 
            color=COLORS['nuclear'], edgecolor='white', linewidth=0.3)
     ax.bar(x, mito_values, bar_width, bottom=nuclear_values,
@@ -488,7 +533,7 @@ def plot_multi_state_stacked_bar(results, plot_dir):
     ax.set_title('HMM State Proportions by Sequence', fontsize=14, fontweight='bold',
                  color=COLORS['text'], pad=15)
     
-    # X-axis labels
+    # X-axis labels - adaptive based on sequence count
     if n_seqs <= 20:
         ax.set_xticks(x)
         ax.set_xticklabels(seq_ids, rotation=45, ha='right', fontsize=8)
@@ -513,7 +558,7 @@ def plot_multi_state_stacked_bar(results, plot_dir):
     # Legend
     ax.legend(loc='upper right', frameon=True, fancybox=True, shadow=True)
     
-    # Add horizontal reference line at 50%
+    # Add horizontal reference line at 50% (decision threshold)
     ax.axhline(y=50, color=COLORS['text'], linestyle=':', alpha=0.5, linewidth=1)
     
     plt.tight_layout()
@@ -674,6 +719,7 @@ def plot_classification_counts(results, plot_dir):
     """Create a bar chart showing count of sequences classified as M or N."""
     fig, ax = plt.subplots(figsize=(8, 6))
     
+    # Count sequences by classification
     calls = [r['call'] for r in results]
     nuclear_count = sum(1 for c in calls if c == 'nuclear')
     mito_count = sum(1 for c in calls if c == 'mitochondrial')
@@ -730,7 +776,7 @@ def plot_loglikelihood_distribution(results, plot_dir):
     
     logliks = [r['loglik'] for r in results]
     
-    # Determine number of bins
+    # Determine number of bins based on data size
     n_bins = min(50, max(10, len(logliks) // 5))
     
     # Create histogram
@@ -795,6 +841,7 @@ def generate_plots(results, plot_dir):
     generated_files = []
     n_seqs = len(results)
     
+    # Choose plot types based on dataset size
     if n_seqs == 1:
         # Single sequence: pie charts
         r = results[0]
@@ -853,6 +900,7 @@ def generate_plots(results, plot_dir):
 # -------------------- Main -------------------- #
 
 def main():
+    # Set up command-line argument parser
     ap = argparse.ArgumentParser(
         description=(
             "HMM Viterbi decoder for nuclear vs mitochondrial classification. "
@@ -861,6 +909,7 @@ def main():
     )
     
     # Core parameters
+    # N-gram size determines tokenization strategy (1=mono, 2=di, 3=tri)
     ap.add_argument("--ngram", type=int, choices=[1,2,3], default=1)
     
     # Model loading - explicit paths required
@@ -871,12 +920,12 @@ def main():
     ap.add_argument("--states_json", required=True,
                     help="Path to states JSON file")
     
-    # Input options
-    ap.add_argument("--fasta")
-    ap.add_argument("--seq", action="append")
-    ap.add_argument("--seq_id", action="append")
-    ap.add_argument("--stdin", action="store_true")
-    ap.add_argument("--stdin_id", default="stdin_seq")
+    # Input options - mutually supportive (can use multiple)
+    ap.add_argument("--fasta")           # FASTA file input
+    ap.add_argument("--seq", action="append")   # Direct sequence string(s)
+    ap.add_argument("--seq_id", action="append") # IDs for --seq inputs
+    ap.add_argument("--stdin", action="store_true")  # Read from stdin
+    ap.add_argument("--stdin_id", default="stdin_seq")  # ID for stdin input
     
     # Sequence processing
     ap.add_argument(
@@ -887,7 +936,7 @@ def main():
     )
     
     # Output
-    ap.add_argument("--out_tsv", required=True)
+    ap.add_argument("--out_tsv", required=True)  # Output TSV file path
     ap.add_argument(
         "--emit_path",
         action="store_true",
@@ -912,6 +961,7 @@ def main():
     
     args = ap.parse_args()
     
+    # Validate that at least one input source is provided
     if not (args.fasta or args.seq or args.stdin):
         raise SystemExit("Provide input via --fasta or --seq (repeatable) or --stdin.")
     
@@ -949,11 +999,15 @@ def main():
     # Collect results for plotting
     plot_results = []
     
+    # Open output file and process sequences
     with open(args.out_tsv, "w") as fo:
         
+        # Write header line
         fo.write(f"#id\tloglik\tnuclear_frac\tmito_frac\tcall\tseq_len_nt\tn_tokens_{args.ngram}mer\n")
         
+        # Process each input sequence
         for rid, raw in iter_inputs(args):
+            # Convert sequence to observation indices
             obs, token_count, nt_length = sequence_to_observations(raw, args.ngram, vocab_idx)
             
             # Apply min_len filter to nucleotide length
@@ -961,23 +1015,29 @@ def main():
                 n_skipped += 1
                 continue
         
+            # Skip empty observation sequences
             if obs.size == 0:
                 n_skipped += 1
                 continue
             
             n_processed += 1
             
+            # Compute log-likelihood via forward algorithm
             ll = forward_ll(pi, A, B, obs)
+            # Decode most likely state path via Viterbi
             _, path = viterbi(pi, A, B, obs)
             
+            # Summarize path and determine classification
             summ = summarize_viterbi(path, nuc_id, mito_id, state_names)
             
+            # Write results to output TSV
             fo.write(
                 f"{rid}\t{ll:.3f}\t"
                 f"{summ['nuclear_frac']}\t{summ['mito_frac']}\t"
                 f"{summ['call']}\t{nt_length}\t{token_count}\n"
             )
             
+            # Optionally emit full decoded path
             if args.emit_path:
                 path_str = " ".join(map(str, path.tolist()))
                 fo.write(f"#{rid}_PATH\t{path_str}\n")
@@ -1024,5 +1084,6 @@ def main():
     report_timing(start_time, end_time)
 
 
+# Script entry point
 if __name__ == "__main__":
     main()

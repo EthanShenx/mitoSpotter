@@ -5,13 +5,6 @@
 #   - Viterbi  : Viterbi training (hard EM)
 #   - hybrid   : EM first, then Viterbi fine-tuning
 
-# Example usage:
-# python merged_hmm_train.py \
-#     --nuclear_tsv nuclear_1nt.tsv \
-#     --mito_tsv mito_1nt.tsv \
-#     --ngram 1 \
-#     --train_method em \
-#     --out_model_json model_1nt.json
 
 # -------------------- Loading Animation -------------------- #
 import sys
@@ -774,7 +767,7 @@ def main():
     else:
         raise SystemExit(f"Unknown train_method: {train_method}")
 
-    # -------------------- Save artifacts -------------------- #
+    # -------------------- Save -------------------- #
 
     os.makedirs(os.path.dirname(args.out_model_json) or ".", exist_ok=True)
     model = {
