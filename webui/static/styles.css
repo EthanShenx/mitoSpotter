@@ -671,6 +671,10 @@ select:focus {
   border-bottom: 1px solid rgba(76, 44, 46, 0.12);
 }
 
+.modal-header.demo {
+  background: linear-gradient(135deg, rgba(168,136,160,0.12), rgba(232,178,135,0.16));
+}
+
 .modal-content {
   padding: 1rem 1.25rem 1.25rem;
   overflow: auto;
@@ -678,3 +682,12 @@ select:focus {
 
 .modal-content h4 { margin: 0.5rem 0; }
 .modal-content ul { margin: 0.25rem 0 0.75rem 1.25rem; }
+
+.note-card {
+  background: #fffefc;
+  border: 1px solid rgba(76, 44, 46, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(76, 44, 46, 0.08);
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.75rem;
+}

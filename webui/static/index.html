@@ -27,11 +27,19 @@
         </div>
         <form id="decode-form" class="form-grid">
           <div class="form-group">
-            <label>Decoder Type</label>
+            <label>Decoder Type (EM)</label>
             <div role="group" aria-label="Decoder Type" class="radio-row">
               <label class="radio"><input type="radio" name="mode" value="nt1" id="mode_nt1" checked /> Single nucleotide (1-nt)</label>
               <label class="radio"><input type="radio" name="mode" value="nt2" id="mode_nt2" /> Di-nucleotide (2-nt)</label>
               <label class="radio"><input type="radio" name="mode" value="nt3" id="mode_nt3" /> Tri-nucleotide (3-nt)</label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Training Regime</label>
+            <div role="group" aria-label="Training Regime" class="radio-row">
+              <label class="radio"><input type="radio" name="regime" value="pure_em" id="regime_em" checked /> Pure EM</label>
+              <label class="radio"><input type="radio" name="regime" value="pure_viterbi" id="regime_vit" /> Pure Viterbi</label>
             </div>
           </div>
 
@@ -58,7 +66,6 @@
               </div>
             </div>
             <input type="file" id="fasta_file" name="fasta_file" accept=".fa,.fasta,.fna,.txt" />
-            <small>Provide a single FASTA file. You may also paste sequences above.</small>
           </div>
 
           <div class="form-group">
@@ -145,47 +152,87 @@
           <button class="icon-btn" id="help-close" type="button" aria-label="Close">Close</button>
         </div>
         <div class="modal-content">
+          <h4>Overview</h4>
+          <ul>
+            <li>Classifies sequences as nuclear vs mitochondrial using a 2‑state HMM.</li>
+            <li>Supports 1‑nt, 2‑nt, and 3‑nt (codon‑stride) tokenization; EM or Viterbi‑trained models.</li>
+          </ul>
+
           <h4>Inputs</h4>
           <ul>
-            <li>Paste nucleotide sequences in FASTA or plain text.</li>
-            <li>Or upload a single FASTA file. Do not mix both demo FASTA and demo sequence at once.</li>
-            <li>Select decoder type: 1‑nt, 2‑nt, or 3‑nt (codon‑stride).</li>
+            <li>Paste nucleotide sequences in FASTA (starts with <code>&gt;</code>) or plain lines (one per sequence).</li>
+            <li>Or upload a single FASTA file (mutually exclusive with the demo sequence helper).</li>
+            <li>Sequences are cleaned (uppercase, U→T, non‑ACGT removed) before tokenization.</li>
+          </ul>
+
+          <h4>Decoder Type (EM) and Regime</h4>
+          <ul>
+            <li><strong>Decoder Type</strong>: choose <em>1‑nt</em>, <em>2‑nt</em>, or <em>3‑nt</em>.
+              <br/>1‑nt uses single bases; 2‑nt uses overlapping dinucleotides; 3‑nt uses non‑overlapping codons (reading‑frame stride).</li>
+            <li><strong>Training Regime</strong>: choose <em>Pure EM</em> or <em>Pure Viterbi</em>. Hybrid models are not shown.</li>
+            <li>Tip: our benchmarks indicate 3‑nt EM often yields the strongest accuracy and cross‑species generalizability.</li>
           </ul>
 
           <h4>Options</h4>
           <ul>
-            <li>Include Viterbi state path: emits per‑sequence state path (N/M) for visualization.</li>
-            <li>Generate and show plots: produces GC/AT and state proportion charts for quick inspection.</li>
+            <li><strong>Include Viterbi state path</strong>: returns the most likely N/M path per sequence; the UI renders a compact run‑length bar.</li>
+            <li><strong>Generate and show plots</strong>: creates GC/AT and state‑proportion charts, classification counts, and log‑likelihood distribution.
+              <br/>Requires <code>matplotlib</code> in the server environment.</li>
           </ul>
 
-          <h4>Running</h4>
+          <h4>Run</h4>
           <ul>
-            <li>Click “Run Decode”. The backend runs the HMM decoder for the chosen n‑gram.</li>
-            <li>Status messages appear above; errors are reported clearly.</li>
+            <li>Click “Run Decode”. Status appears above; errors explain what to fix.</li>
+            <li>For short fragments, consider lowering the threshold (the decoder minimum length is 150 nt by default).</li>
           </ul>
 
-          <h4>Interpreting Results</h4>
+          <h4>Interpret the results</h4>
           <ul>
-            <li>Summary: brief sentence indicating the predicted class for the first record.</li>
-            <li>Plots: thumbnails of generated charts. Click to zoom and download if needed.</li>
-            <li>Table:
-              <br/>ID = sequence id;
-              Call = predicted class;
-              Nuclear% / Mito% = fraction of Viterbi path in each state;
-              Length = nucleotide or token length per mode.</li>
-            <li>Paths: compact bar showing N/M runs along the Viterbi path (if enabled).</li>
+            <li><strong>Summary</strong>: one‑line prediction for the first record.</li>
+            <li><strong>Plots</strong>: click a thumbnail to zoom and optionally download. No auto‑downloads.</li>
+            <li><strong>Table</strong> (one row per sequence):
+              <br/><em>ID</em> = sequence id;
+              <em>Call</em> = predicted class;
+              <em>Nuclear% / Mito%</em> = fraction of the Viterbi path in each state;
+              <em>Length</em> = nucleotide length (1‑nt) or token count (2‑/3‑nt).</li>
+            <li><strong>Paths</strong> (if enabled): run‑length view of N (nuclear) and M (mitochondrial‑like) along the sequence.</li>
           </ul>
 
           <h4>Export</h4>
           <ul>
-            <li>Download TSV/CSV of the results from the Results card’s menu.</li>
+            <li>Use the “Download Results” menu to export TSV/CSV.</li>
+            <li>TSV includes optional <code>#&lt;id&gt;_PATH</code> lines with state sequences when path emission is enabled.</li>
           </ul>
 
-          <h4>Troubleshooting</h4>
+          <h4>Tips & troubleshooting</h4>
           <ul>
-            <li>If no results, ensure sequences meet length thresholds and match the selected mode.</li>
-            <li>If demo FASTA is loaded, loading demo sequence will clear FASTA (and vice versa).</li>
+            <li>If no rows are returned, inputs may be shorter than the minimum length or filtered out; try longer sequences or lower the threshold.</li>
+            <li>Ensure the selected decoder type (1/2/3‑nt) matches the trained model used.</li>
+            <li>On Windows, make sure <code>matplotlib</code> is installed in the same environment running the server if plots don’t show.</li>
+            <li>Switch between 1‑nt and 3‑nt EM on the same input to compare model sensitivity.</li>
+            <li>Demo FASTA and demo sequence helpers are mutually exclusive; switching clears the other.</li>
           </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Demo FASTA rationale modal -->
+    <div class="modal" id="demo-modal" aria-hidden="true" role="dialog" aria-label="About the Demo FASTA">
+      <div class="modal-inner" role="document">
+        <div class="modal-header demo">
+          <h3>About the Demo FASTA</h3>
+          <button class="icon-btn" id="demo-close" type="button" aria-label="Close">Close</button>
+        </div>
+        <div class="modal-content">
+          <div class="note-card">
+            <p><strong>Why use Rickettsia prowazekii strain Madrid E’s FASTA?</strong><br/>
+            It is currently one of the closest known bacterial relatives of mitochondria. Its genome organization and sequence features resemble those seen during mitochondrial evolution.</p>
+          </div>
+          <div class="note-card">
+            <p><strong>What to look for with different models?</strong><br/>
+            Using the <em>3‑nt (EM)</em> model, you will often see many genes classified as <strong>M</strong> (mitochondrial‑like), whereas the <em>1‑nt</em> model may not capture this signal. This aligns with our benchmark results, indicating that the <strong>3‑nt EM</strong> model is generally the model with the highest accuracy and strongest cross-species generalizability.</p>
+          </div>
+          <p style="opacity:.85">Tip: switch modes (1‑nt ↔ 3‑nt) on the same input to compare predictions.</p>
         </div>
       </div>
     </div>

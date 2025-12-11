@@ -15,18 +15,24 @@ const fastaLoadedBadge = document.getElementById("fasta-loaded-badge");
 const lenHeader = document.getElementById("len-header");
 const modeRadios = document.querySelectorAll("input[name='mode']");
 const plottingInput = document.getElementById("plotting");
+const regimeRadios = document.querySelectorAll("input[name='regime']");
 // Min length and method selection removed
 const downloadBtn = document.getElementById("download-results");
 const downloadMenu = document.getElementById("download-menu");
 const helpBtn = document.getElementById("help-btn");
 const helpModal = document.getElementById("help-modal");
 const helpClose = document.getElementById("help-close");
+const demoModal = document.getElementById("demo-modal");
+const demoClose = document.getElementById("demo-close");
 
 const DEMO_SEQUENCE =
   "ATA CCC ATG GCC AAC CTC CTA CTC CTC ATT GTA CCC ATT CTA ATC GCA ATG GCA TTC CTA ATG CTT ACC GAA CGA AAA ATT CTA GGC TAT ATA CAA CTA CGC AAA GGC CCC AAC GTT GTA GGC CCC TAC GGG CTA CTA CAA CCC TTC GCT GAC GCC ATA AAA CTC TTC ACC AAA GAG CCC CTA AAA CCC GCC ACA TCT ACC ATC ACC CTC TAC ATC ACC GCC CCG ACC TTA GCT CTC ACC ATC GCT CTT CTA CTA TGA ACC CCC CTC CCC ATA CCC AAC CCC CTG GTC AAC CTC AAC CTA GGC CTC CTA TTT ATT CTA GCC ACC TCT AGC CTA GCC GTT TAC TCA ATC CTC TGA TCA GGG TGA GCA TCA AAC TCA AAC TAC GCC CTG ATC GGC GCA CTG CGA GCA GTA GCC CAA ACA ATC TCA TAT GAA GTC ACC CTA GCC ATC ATT CTA CTA TCA ACA TTA CTA ATA AGT GGC TCC TTT AAC CTC TCC ACC CTT ATC ACA ACA CAA GAA CAC CTC TGA TTA CTC CTG CCA TCA TGA CCC TTG GCC ATA ATA TGA TTT ATC TCC ACA CTA GCA GAG ACC AAC CGA ACC CCC TTC GAC CTT GCC GAA GGG GAG TCC GAA CTA GTC TCA GGC TTC AAC ATC GAA TAC GCC GCA GGC CCC TTC GCC CTA TTC TTC ATA GCC GAA TAC ACA AAC ATT ATT ATA ATA AAC ACC CTC ACC ACT ACA ATC TTC CTA GGA ACA ACA TAT GAC GCA CTC TCC CCT GAA CTC TAC ACA ACA TAT TTT GTC ACC AAG ACC CTA CTT CTA ACC TCC CTG TTC TTA TGA ATT CGA ACA GCA TAC CCC CGA TTC CGC TAC GAC CAA CTC ATA CAC CTC CTA TGA AAA AAC TTC CTA CCA CTC ACC CTA GCA TTA CTT ATA TGA TAT GTC TCC ATA CCC ATT ACA ATC TCC AGC ATT CCC CCT CAA ACC";
 
 if (demoButton && sequenceField) {
   demoButton.addEventListener("click", () => {
+    // Close any open demo/info modals when switching to demo sequence
+    try { if (demoModal) demoModal.setAttribute("aria-hidden", "true"); } catch (_) {}
+    try { if (helpModal) helpModal.setAttribute("aria-hidden", "true"); } catch (_) {}
     // If a demo FASTA or user file is loaded, unload it and remove the badge
     if ((typeof DEMO_FASTA_FILE !== 'undefined' && DEMO_FASTA_FILE && (!fastaInput || !fastaInput.files || fastaInput.files.length === 0)) ||
         (fastaInput && fastaInput.files && fastaInput.files.length > 0)) {
@@ -52,6 +58,8 @@ if (demoFastaButton) {
       setStatus("Clear the loaded demo sequence to load FASTA.", "warning");
       return;
     }
+    // Ensure rationale modal is closed when loading demo FASTA
+    if (demoModal) demoModal.setAttribute("aria-hidden", "true");
     try {
       const res = await fetch("/static/Rickettsia_prowazekii_str_Madrid_E.fa");
       if (!res.ok) throw new Error("Failed to fetch demo FASTA");
@@ -251,6 +259,9 @@ form.addEventListener("submit", async (event) => {
   // Ensure selected mode is sent
   const checkedMode = Array.from(modeRadios).find((r) => r.checked)?.value || CURRENT_MODE || "nt1";
   fd.set("mode", checkedMode);
+  // Select training regime (pure_em / pure_viterbi) for fallback assets
+  const checkedRegime = Array.from(regimeRadios).find((r) => r.checked)?.value || "pure_em";
+  fd.set("regime", checkedRegime);
   CURRENT_MODE = checkedMode;
   setUnitsHeader(CURRENT_MODE);
   updateModeUI(CURRENT_MODE);
@@ -326,6 +337,13 @@ for (const r of modeRadios) {
     CURRENT_MODE = r.value;
     setUnitsHeader(CURRENT_MODE);
     updateModeUI(CURRENT_MODE);
+  });
+}
+
+// Respond to regime changes (no dynamic config needed; passed to backend)
+for (const r of regimeRadios) {
+  r.addEventListener("change", () => {
+    // no-op placeholder; value is read on submit
   });
 }
 
@@ -528,3 +546,9 @@ if (helpModal) helpModal.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeHelp();
 });
+
+// Demo modal handlers
+function closeDemo() { if (demoModal) demoModal.setAttribute("aria-hidden", "true"); }
+if (demoClose) demoClose.addEventListener("click", closeDemo);
+if (demoModal) demoModal.addEventListener("click", (e) => { if (e.target === demoModal) closeDemo(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDemo(); });

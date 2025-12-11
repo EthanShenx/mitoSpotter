@@ -4,6 +4,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+# Thin wrapper around the decode script and asset discovery for the web UI.
 
 
 SPECIES_LABELS = {
@@ -15,6 +16,7 @@ SPECIES_LABELS = {
 
 @dataclass
 class SpeciesAssets:
+    # Represents a bundle of files (model/vocab/states) for a species/mode
     """Describes the trained model asset bundle for a species code."""
 
     species_id: str
@@ -27,6 +29,7 @@ class SpeciesAssets:
 
 @dataclass
 class DecodeConfig:
+    # Configuration for locating scripts and assets across modes (nt1/nt2/nt3)
     """Holds script paths, assets dir, and available species bundles per mode.
 
     This revision aligns to the unified NT decoder (scripts/05_decode_path_nt.py).
@@ -40,6 +43,7 @@ class DecodeConfig:
 
     @classmethod
     def with_project_defaults(cls, project_root: Path) -> "DecodeConfig":
+        # Discover the unified decoder and scan for available assets
         """Create a config by scanning the default project layout."""
 
         # Unified decoder supports ngram=1/2/3 via a single script
@@ -50,6 +54,7 @@ class DecodeConfig:
         species_map_by_mode: Dict[str, Dict[str, SpeciesAssets]] = {"nt1": {}, "nt2": {}, "nt3": {}}
 
         def add_species(mode: str, species_id: str, model_path: Path, vocab_path: Path, states_path: Path) -> None:
+            # Register a species/mode bundle only if all required files exist
             if not (model_path.exists() and vocab_path.exists() and states_path.exists()):
                 return
             label = SPECIES_LABELS.get(species_id, species_id.upper())
@@ -125,6 +130,9 @@ class DecodeConfig:
                     if not mode_dir.exists():
                         continue
                     for regime_dir in sorted(p for p in mode_dir.iterdir() if p.is_dir()):
+                        # Only include pure EM or pure Viterbi regimes; skip hybrid variants
+                        if not (regime_dir.name.startswith("pure_em") or regime_dir.name.startswith("pure_viterbi")):
+                            continue
                         model_path = regime_dir / "model.json"
                         vocab_path = regime_dir / "vocab.json"
                         states_path = regime_dir / "states.json"
@@ -137,6 +145,7 @@ class DecodeConfig:
                     assets_dir = alt_root  # reflect the actual assets root for any fallback usage
 
         if not species_map_by_mode["nt1"] and not species_map_by_mode["nt2"] and not species_map_by_mode["nt3"]:
+            # No assets found in either standard location
             raise FileNotFoundError(
                 f"No species asset bundles found in {project_root / 'out'} or {project_root / 'out_dir' / '04_model'}"
             )
@@ -154,11 +163,18 @@ class DecodeConfig:
         )
 
     def get_species(self, mode: str, species_id: Optional[str] = None) -> SpeciesAssets:
+        # Resolve a concrete assets bundle for a mode/species selection
         if mode not in self.species_map_by_mode:
             raise KeyError(f"Unknown mode '{mode}'.")
         smap = self.species_map_by_mode[mode]
         if not smap:
             raise KeyError(f"No species available for mode '{mode}'.")
+        # Allow selecting by regime keyword for fallback assets (e.g., "pure_em" or "pure_viterbi")
+        if species_id in ("pure_em", "pure_viterbi"):
+            for key in sorted(smap.keys()):
+                if species_id in key:
+                    return smap[key]
+            raise KeyError(f"No assets matching regime '{species_id}' for mode '{mode}'. Available: {sorted(smap)}")
         target_id = species_id or self.default_species_id_by_mode.get(mode) or sorted(smap.keys())[0]
         if target_id not in smap:
             raise KeyError(f"Unknown species '{target_id}' for mode '{mode}'. Available: {sorted(smap)}")
@@ -166,6 +182,7 @@ class DecodeConfig:
 
 
 class DecodeRunner:
+    # Executes the decode script as a subprocess and normalizes its outputs
     """Thin wrapper that invokes the existing mitoSpotter decode script."""
 
     def __init__(self, config: DecodeConfig) -> None:
@@ -195,6 +212,7 @@ class DecodeRunner:
         species_id: Optional[str] = None,
         plotting: bool = False,
     ) -> Dict[str, List[Dict[str, object]]]:
+        # Build candidate CLI invocations; write temporary FASTA if sequences are provided
         """Run the decode script and parse its TSV output (unified NT decoder)."""
         if not sequences and not fasta_path:
             raise ValueError("At least one of sequences or fasta_path must be provided.")
@@ -217,6 +235,7 @@ class DecodeRunner:
             effective_fasta = fasta_path
 
             if sequences:
+                # Convert inline sequences to a temporary FASTA file
                 seq_file = tmpdir / "input_sequences.fa"
                 with seq_file.open("w", encoding="ascii") as fh:
                     for idx, (seq_id, seq) in enumerate(sequences, start=1):
@@ -285,6 +304,7 @@ class DecodeRunner:
                 except subprocess.CalledProcessError as e:
                     last_err = e
             else:
+                # Surface the last stderr for easier debugging in the UI
                 msg = (last_err.stderr if last_err else "") or "decoder failed"
                 raise RuntimeError(f"Decoder failed. Last error: {msg.strip()}")
 
@@ -292,6 +312,7 @@ class DecodeRunner:
             paths: List[Dict[str, object]] = []
 
             with output_tsv.open("r", encoding="utf-8") as fh:
+                # Parse result rows and optional PATH lines; be tolerant to column variations
                 for raw_line in fh:
                     line = raw_line.rstrip("\n")
                     if not line:
@@ -390,6 +411,7 @@ class DecodeRunner:
 
                 # Fallback: if we have a directory but no files parsed, scan it
                 if plot_dir and not plot_files:
+                    # If stderr didn’t list files, scan the folder to collect PNGs
                     # Decoder ran with cwd set to project root by default
                     project_root = script_path.parent.parent
                     dir_path = (workdir or project_root) / plot_dir

@@ -1,6 +1,8 @@
 from __future__ import annotations
+# Flask web entrypoint for mitoSpotter demo UI and API
 
 import tempfile
+# Standard library imports and typing helpers
 from pathlib import Path
 from typing import List, Tuple
 
@@ -13,9 +15,11 @@ except ImportError:  # pragma: no cover - fallback for direct execution
     from webui.pipeline_runner import DecodeConfig, DecodeRunner  # type: ignore
 
 from flask import Flask, jsonify, request, send_from_directory
+# Flask app configured to serve static assets and JSON APIs
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Create app and initialize a DecodeRunner using discovered assets
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 decode_config = DecodeConfig.with_project_defaults(PROJECT_ROOT)
 runner = DecodeRunner(decode_config)
@@ -23,6 +27,7 @@ runner = DecodeRunner(decode_config)
 
 def refresh_runner() -> None:
     """Rescan assets so newly added species bundles appear without restart."""
+    # Rebuild config/runner so UI sees new models added to out/ or out_dir/
     global decode_config, runner
     decode_config = DecodeConfig.with_project_defaults(PROJECT_ROOT)
     runner = DecodeRunner(decode_config)
@@ -30,6 +35,7 @@ def refresh_runner() -> None:
 
 def _parse_sequence_text(raw: str) -> List[Tuple[str, str]]:
     """Interpret pasted text as either FASTA or line-separated sequences."""
+    # Supports both FASTA headers (>) and plain newline-delimited sequences
     raw = raw.strip()
     if not raw:
         return []
@@ -64,6 +70,7 @@ def _parse_sequence_text(raw: str) -> List[Tuple[str, str]]:
 
 
 @app.get("/api/config")
+# Endpoint: returns available modes/species and default asset paths for the UI
 def get_config():
     refresh_runner()
     cfg = runner.config
@@ -106,6 +113,7 @@ def get_config():
 
 
 @app.post("/api/run")
+# Endpoint: accepts sequences or FASTA upload and runs the decoder via DecodeRunner
 def run_decode():
     refresh_runner()
     form = request.form
@@ -114,6 +122,8 @@ def run_decode():
     emit_path = form.get("emit_path", "false").lower() in ("true", "1", "yes", "on")
     plotting = form.get("plotting", "false").lower() in ("true", "1", "yes", "on")
     species_id = form.get("species")
+    # Regime selector for fallback assets in out_dir/04_model: "pure_em" or "pure_viterbi"
+    regime = form.get("regime")
     sequence_text = form.get("sequence_text", "")
 
     sequences = _parse_sequence_text(sequence_text) if sequence_text else []
@@ -137,7 +147,7 @@ def run_decode():
             mode=mode,
             method=method,
             emit_path=emit_path,
-            species_id=species_id,
+            species_id=regime or species_id,
             plotting=plotting,
         )
     except Exception as exc:  # noqa: BLE001 keep surface succinct
@@ -152,11 +162,13 @@ def run_decode():
 
 
 @app.get("/")
+# Serve the SPA index
 def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
 @app.get("/healthz")
+# Lightweight health check
 def healthcheck():
     return jsonify({"status": "ok"})
 
@@ -168,6 +180,7 @@ def favicon():
 
 
 @app.get("/api/plots/<path:relpath>")
+# Endpoint: securely serve generated plot images from Plot_res_* folders
 def get_plot(relpath: str):
     """Serve plot images generated during a decode run.
 
@@ -198,4 +211,5 @@ def get_plot(relpath: str):
 
 
 if __name__ == "__main__":
+    # Dev server entrypoint (use gunicorn for production)
     app.run(host="0.0.0.0", port=8000, debug=True)
