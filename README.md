@@ -46,7 +46,9 @@ Before executing any cells in this notebook, please ensure the following:
 **Output**: Two text files containing mitochondrial and nuclear gene IDs.  
 **Key parameter**: `--protein_coding_only` ensures we only retain protein-coding genes, which are relevant for marker identification.
 
-This step is expected to no more than 30s.
+This step is expected to no more than 15s.
+
+Note: If you use powershell, you should replace the `\` with a backtick.
 
 ```bash
 python scripts/01_from_gtf_extract_id.py \
@@ -62,9 +64,7 @@ python scripts/01_from_gtf_extract_id.py \
 
 ## 02 SPLIT FASTA BY ID
 
-In this step, we want to get the sequence with these ids.
-
-**Input**: A complete *5'UTR + CDS + 3' UTR* genome sequence file (FASTA format, from the previous step)
+**Input**: A complete *5'UTR + CDS + 3' UTR* genome sequence file (FASTA format, from the previous step), the reason why use *5'UTR + CDS + 3' UTR* genome sequence is detailed at the *end* of this notebook.
 
 **Output**: Two FASTA files containing mitochondrial and nuclear gene sequences
 
@@ -76,7 +76,7 @@ In this step, we want to get the sequence with these ids.
 
 - `--prefix`: Custom prefix for output filenames
 
-This step is expected to take around 30s.
+This step is expected to take no longer than 30s.
 
 ```bash
 python scripts/02_fasta_split_by_id.py \
@@ -102,21 +102,33 @@ python scripts/02_fasta_split_by_id.py \
 **Purpose**: This step will perform the sequence unit cutting and train/test split for subsequent model training. This step is expected to take no more than **1 minute**.
 
 ```bash
-python scripts/03_sequence2unit_nt.py \
-  --mito_fasta out_dir/02_split_fasta/human_marker_testing_mito.fasta \
-  --nuclear_fasta out_dir/02_split_fasta/human_marker_testing_nuclear.fasta \
-  --ngram 3 \
-  --test_prop 0.2 \
-  --outdir out_dir/03_unit \
-  --prefix human_marker_testing_ \
-  --seed 9999
+for loc in nuclear mito; do
+  for kind in cds; do
+    for mode in 3nt 2nt 1nt; do
+
+      echo "Running: $loc $kind $mode"
+
+      python scripts/03_sequence2unit_nt.py \
+        --fasta out_dir/02_split_fasta/human_marker_testing_${loc}_${kind}.fa \
+        --mode $mode \
+        --train_tsv out_dir/03_unit/train/human_marker_testing_${loc}_${mode}_train.tsv \
+        --holdout_tsv out_dir/03_unit/holdout/human_marker_testing_${loc}_${mode}_holdout.tsv \
+        --train_frac 0.7
+
+    done
+  done
+done
 ```
 
 ### Expected Output
 
 ![03 output](./webui/static/03_output.png)
 
-## 04 TRAIN HMM NT
+## 04 TRAIN HMM
+
+Yeahh! Finally comes into training phase! Let me take 3-nt level for example.
+
+Note: All the pre-trained results that you can see in the `out_dir/model` directory are trained without sampling and early stop convergence. With sampling srategies used below, although the model trained by you will be slightly a little bit different from ours, but efficient and of high quality as well.
 
 **Input**: Train TSV files from Step 3 (3-nt units)
 
@@ -124,8 +136,8 @@ python scripts/03_sequence2unit_nt.py \
 
 **Training method**: `--train_method` can be one of the following:
 
-- `em`: Expectation-Maximization (unsupervised)
-- `viterbi`: Viterbi training (semi-supervised)
+- `em`: Expectation-Maximization
+- `viterbi`: Viterbi training
 - `hybrid`: Combination of EM and Viterbi, where `--n_em_iter` and `--n_viterbi_iter` control the number of iterations for each method.
 
 **Key parameters**:
@@ -134,8 +146,6 @@ python scripts/03_sequence2unit_nt.py \
 - `--learn et`: Optimize both Emission and Transition probabilities (super important!)
 - `--sample`: Downsample rate for faster training (0.01 = 1% of data)
 - `--n_workers`: Number of parallel workers (for Mac/Linux; remove for Windows)
-
-**Purpose**: This step trains a two-state HMM that distinguishes between nuclear and mitochondrial sequence patterns.
 
 ### EM
 
@@ -256,7 +266,7 @@ These are some examples of some plots will be generated if you input multiple se
   
 ## If I want to test the model with my own genome, what should I do?
 
-For training, we used the entire transcript sequence (5' UTR + CDS + 3' UTR) for a gene as input data, rather than just CDS alone, because UTR sequences exhibit substantial differences between mtGenes and nGenes. For example, mtGene 3'UTR often lacks the microRNA binding sites and typical polyA signals which are common in nGenes (see below for more detailed differences).
+In our training setup, the input for each gene was its complete transcript sequence (5′ UTR + CDS + 3′ UTR), rather than the CDS alone. This design was due to the fact that UTRs differ substantially between mtGenes and nGenes. For example, the 3′ UTRs of mtGenes often lack microRNA-binding sites and the canonical polyadenylation signals that are typically present in nGene 3′ UTRs (see below for details).       
 
 So if you want to test our training-decoding workflow with *YOUR* data, 5' UTR + CDS + 3' UTR sequence is preferred.
 
