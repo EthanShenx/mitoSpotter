@@ -1,14 +1,21 @@
-# mitoSpotter <img src='./webui/static/logo.png' align="right" alt="" width="120" />
+<div align="center">
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![Flask](https://img.shields.io/badge/Flask-2.0+-000000?style=flat&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-[![NumPy](https://img.shields.io/badge/NumPy-1.21+-013243?style=flat&logo=numpy&logoColor=white)](https://numpy.org/)
-[![BioPython](https://img.shields.io/badge/BioPython-1.79+-3776AB?style=flat&logo=python&logoColor=white)](https://biopython.org/)
-[![Matplotlib](https://img.shields.io/badge/Matplotlib-3.5+-11557C?style=flat)](https://matplotlib.org/)
-[![Pandas](https://img.shields.io/badge/Pandas-1.4+-150458?style=flat&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat)](LICENSE)
+<img src="./webui/static/logo.png" alt="mitoSpotter Logo" width="150" />
 
-A **Hidden Markov Model (HMM)** based tool to classify nuclear genes and mitochondria genes in an annotation-independent manner.
+# mitoSpotter
+
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Flask](https://img.shields.io/badge/Flask-2.0+-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![NumPy](https://img.shields.io/badge/NumPy-1.21+-013243?style=for-the-badge&logo=numpy&logoColor=white)](https://numpy.org/)
+[![BioPython](https://img.shields.io/badge/BioPython-1.79+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://biopython.org/)
+[![Matplotlib](https://img.shields.io/badge/Matplotlib-3.5+-11557C?style=for-the-badge)](https://matplotlib.org/)
+[![Pandas](https://img.shields.io/badge/Pandas-1.4+-150458?style=for-the-badge&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+
+[![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+
+**A Hidden Markov Model (HMM) based tool to classify nuclear genes and mitochondria genes in an annotation-independent manner.**
+
+</div>
 
 ---
 
@@ -16,10 +23,21 @@ A **Hidden Markov Model (HMM)** based tool to classify nuclear genes and mitocho
 
 Our model has been rigorously tested on both same-species and cross-species datasets. The results demonstrate strong classification accuracy across different experimental setups.
 
-| Benchmark Type | Description | Results |
-|:---:|:---|:---:|
-| **Same Species** | Evaluation on human gene sequences with train/test split | [View Results](./webui/static/Benchmark/human_benchmark.pdf) |
-| **Cross Species** | Generalization test across human, mouse, and rat genomes | [View Results](./webui/static/Benchmark/Cross_benchmark.pdf) |
+### Same Species Benchmark
+
+Evaluation on human gene sequences with train/test split:
+
+<div align="center">
+<img src="./webui/static/Benchmark/human_benchmark.png" alt="Same Species Benchmark Results" width="800" />
+</div>
+
+### Cross Species Benchmark
+
+Generalization test across human, mouse, and rat genomes:
+
+<div align="center">
+<img src="./webui/static/Benchmark/Cross_benchmark.png" alt="Cross Species Benchmark Results" width="800" />
+</div>
 
 > **Key Finding:** The 3-nt (trinucleotide) EM model consistently achieves the highest accuracy and demonstrates the strongest cross-species generalizability.
 
