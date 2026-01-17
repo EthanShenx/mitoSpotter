@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="./webui/static/logo.png" alt="mitoSpotter Logo" width="150" />
+<img src="./webui/static/logo.png" alt="mitoSpotter Logo" width="180" />
 
-# mitoSpotter
+# _mitoSpotter_
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-2.0+-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
