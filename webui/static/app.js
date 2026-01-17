@@ -1,3 +1,29 @@
+// -------------------- Tab Navigation -------------------- //
+const tabBtns = document.querySelectorAll(".tab-btn");
+const tabContents = document.querySelectorAll(".tab-content");
+
+tabBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    const targetTab = btn.dataset.tab;
+
+    // Update button states
+    tabBtns.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    // Update content visibility
+    tabContents.forEach(content => {
+      content.classList.remove("active");
+      if (content.id === `${targetTab}-tab`) {
+        content.classList.add("active");
+      }
+    });
+
+    // Hide results card when switching tabs
+    if (resultsCard) resultsCard.hidden = true;
+  });
+});
+
+// -------------------- Decode Tab Elements -------------------- //
 const form = document.getElementById("decode-form");
 const statusEl = document.getElementById("status");
 const resultsCard = document.getElementById("results-card");
@@ -24,6 +50,22 @@ const helpModal = document.getElementById("help-modal");
 const helpClose = document.getElementById("help-close");
 const demoModal = document.getElementById("demo-modal");
 const demoClose = document.getElementById("demo-close");
+
+// -------------------- Train Tab Elements -------------------- //
+const trainForm = document.getElementById("train-form");
+const trainStatusEl = document.getElementById("train-status");
+const trainProgress = document.getElementById("train-progress");
+const trainProgressBar = document.getElementById("train-progress-bar");
+const trainPhase = document.getElementById("train-phase");
+const trainPercent = document.getElementById("train-percent");
+const trainIteration = document.getElementById("train-iteration");
+const trainLoglik = document.getElementById("train-loglik");
+const trainMessage = document.getElementById("train-message");
+const trainResults = document.getElementById("train-results");
+const trainSubmitBtn = document.getElementById("train-submit-btn");
+const trainHelpBtn = document.getElementById("train-help-btn");
+const trainHelpModal = document.getElementById("train-help-modal");
+const trainHelpClose = document.getElementById("train-help-close");
 
 const DEMO_SEQUENCE =
   "ATA CCC ATG GCC AAC CTC CTA CTC CTC ATT GTA CCC ATT CTA ATC GCA ATG GCA TTC CTA ATG CTT ACC GAA CGA AAA ATT CTA GGC TAT ATA CAA CTA CGC AAA GGC CCC AAC GTT GTA GGC CCC TAC GGG CTA CTA CAA CCC TTC GCT GAC GCC ATA AAA CTC TTC ACC AAA GAG CCC CTA AAA CCC GCC ACA TCT ACC ATC ACC CTC TAC ATC ACC GCC CCG ACC TTA GCT CTC ACC ATC GCT CTT CTA CTA TGA ACC CCC CTC CCC ATA CCC AAC CCC CTG GTC AAC CTC AAC CTA GGC CTC CTA TTT ATT CTA GCC ACC TCT AGC CTA GCC GTT TAC TCA ATC CTC TGA TCA GGG TGA GCA TCA AAC TCA AAC TAC GCC CTG ATC GGC GCA CTG CGA GCA GTA GCC CAA ACA ATC TCA TAT GAA GTC ACC CTA GCC ATC ATT CTA CTA TCA ACA TTA CTA ATA AGT GGC TCC TTT AAC CTC TCC ACC CTT ATC ACA ACA CAA GAA CAC CTC TGA TTA CTC CTG CCA TCA TGA CCC TTG GCC ATA ATA TGA TTT ATC TCC ACA CTA GCA GAG ACC AAC CGA ACC CCC TTC GAC CTT GCC GAA GGG GAG TCC GAA CTA GTC TCA GGC TTC AAC ATC GAA TAC GCC GCA GGC CCC TTC GCC CTA TTC TTC ATA GCC GAA TAC ACA AAC ATT ATT ATA ATA AAC ACC CTC ACC ACT ACA ATC TTC CTA GGA ACA ACA TAT GAC GCA CTC TCC CCT GAA CTC TAC ACA ACA TAT TTT GTC ACC AAG ACC CTA CTT CTA ACC TCC CTG TTC TTA TGA ATT CGA ACA GCA TAC CCC CGA TTC CGC TAC GAC CAA CTC ATA CAC CTC CTA TGA AAA AAC TTC CTA CCA CTC ACC CTA GCA TTA CTT ATA TGA TAT GTC TCC ATA CCC ATT ACA ATC TCC AGC ATT CCC CCT CAA ACC";
@@ -552,3 +594,182 @@ function closeDemo() { if (demoModal) demoModal.setAttribute("aria-hidden", "tru
 if (demoClose) demoClose.addEventListener("click", closeDemo);
 if (demoModal) demoModal.addEventListener("click", (e) => { if (e.target === demoModal) closeDemo(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDemo(); });
+
+// -------------------- Training Functionality -------------------- //
+
+function setTrainStatus(message, tone = "info") {
+  if (trainStatusEl) {
+    trainStatusEl.textContent = message;
+    trainStatusEl.dataset.tone = tone;
+  }
+}
+
+function resetTrainProgress() {
+  if (trainProgress) trainProgress.hidden = true;
+  if (trainProgressBar) {
+    trainProgressBar.style.width = "0%";
+    trainProgressBar.classList.remove("animated");
+  }
+  if (trainPhase) trainPhase.textContent = "Initializing...";
+  if (trainPercent) trainPercent.textContent = "0%";
+  if (trainIteration) trainIteration.textContent = "Iteration: 0/0";
+  if (trainLoglik) trainLoglik.textContent = "Log-likelihood: --";
+  if (trainMessage) trainMessage.textContent = "";
+  if (trainResults) trainResults.hidden = true;
+}
+
+function updateTrainProgress(info) {
+  if (!trainProgress) return;
+
+  const type = info.type;
+
+  if (type === "start") {
+    trainProgress.hidden = false;
+    trainProgressBar.classList.add("animated");
+    trainPhase.textContent = `Starting ${info.train_method.toUpperCase()} training...`;
+  } else if (type === "phase") {
+    const phaseNames = {
+      loading: "Loading data",
+      em: "EM Training",
+      viterbi: "Viterbi Training",
+      saving: "Saving model"
+    };
+    trainPhase.textContent = phaseNames[info.phase] || info.phase;
+    if (info.message) {
+      trainMessage.textContent = info.message;
+    }
+  } else if (type === "info") {
+    trainMessage.textContent = info.message || "";
+  } else if (type === "iteration_complete") {
+    const progress = info.overall_progress || 0;
+    trainProgressBar.style.width = `${progress}%`;
+    trainPercent.textContent = `${Math.round(progress)}%`;
+    trainIteration.textContent = `Iteration: ${info.iteration}/${info.total_iterations}`;
+    if (typeof info.loglik === "number") {
+      trainLoglik.textContent = `Log-likelihood: ${info.loglik.toFixed(2)}`;
+    }
+  } else if (type === "sequence_progress") {
+    // Update message with sequence progress
+    trainMessage.textContent = `Processing sequence ${info.sequence}/${info.total_sequences}...`;
+  } else if (type === "early_stop") {
+    trainMessage.textContent = `Converged at iteration ${info.iteration}`;
+  } else if (type === "complete") {
+    trainProgressBar.style.width = "100%";
+    trainPercent.textContent = "100%";
+    trainProgressBar.classList.remove("animated");
+    trainPhase.textContent = "Training complete!";
+    trainMessage.textContent = "";
+
+    // Show results
+    if (trainResults && info.result) {
+      trainResults.hidden = false;
+      const modelPath = document.getElementById("result-model-path");
+      const seqCount = document.getElementById("result-sequences");
+      if (modelPath) modelPath.textContent = info.result.model_path;
+      if (seqCount) seqCount.textContent = `${info.result.n_nuclear} nuclear + ${info.result.n_mito} mito = ${info.result.n_sequences} total`;
+    }
+  } else if (type === "error") {
+    trainProgressBar.classList.remove("animated");
+    trainPhase.textContent = "Error";
+    trainMessage.textContent = info.error || "Training failed";
+  }
+}
+
+if (trainForm) {
+  trainForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    // Disable submit button
+    if (trainSubmitBtn) trainSubmitBtn.disabled = true;
+
+    // Reset progress UI
+    resetTrainProgress();
+    setTrainStatus("Starting training job...", "pending");
+
+    // Build form data
+    const fd = new FormData(trainForm);
+
+    // Get selected radio values
+    const ngram = trainForm.querySelector("input[name='train_ngram']:checked")?.value || "1";
+    const trainMethod = trainForm.querySelector("input[name='train_method']:checked")?.value || "em";
+    const learn = trainForm.querySelector("input[name='learn']:checked")?.value || "et";
+
+    fd.set("ngram", ngram);
+    fd.set("train_method", trainMethod);
+    fd.set("learn", learn);
+
+    try {
+      // Start training job
+      const res = await fetch("/api/train", { method: "POST", body: fd });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to start training");
+      }
+
+      const jobId = data.job_id;
+      setTrainStatus(`Training job ${jobId} started`, "info");
+
+      // Show progress section
+      if (trainProgress) trainProgress.hidden = false;
+
+      // Connect to SSE for progress updates
+      const eventSource = new EventSource(`/api/train/progress/${jobId}`);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const info = JSON.parse(event.data);
+
+          if (info.type === "done") {
+            eventSource.close();
+            if (trainSubmitBtn) trainSubmitBtn.disabled = false;
+
+            if (info.status === "completed") {
+              setTrainStatus("Training completed successfully!", "success");
+            } else if (info.status === "failed") {
+              setTrainStatus(`Training failed: ${info.error || "Unknown error"}`, "error");
+            }
+            return;
+          }
+
+          updateTrainProgress(info);
+        } catch (err) {
+          console.error("Error parsing SSE data:", err);
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error("SSE error:", err);
+        eventSource.close();
+        if (trainSubmitBtn) trainSubmitBtn.disabled = false;
+        setTrainStatus("Connection lost. Check console for details.", "error");
+      };
+
+    } catch (err) {
+      console.error(err);
+      setTrainStatus(err.message || "Failed to start training", "error");
+      if (trainSubmitBtn) trainSubmitBtn.disabled = false;
+    }
+  });
+
+  trainForm.addEventListener("reset", () => {
+    resetTrainProgress();
+    setTrainStatus("Form cleared.", "info");
+  });
+}
+
+// Training help modal handlers
+function openTrainHelp() {
+  if (trainHelpModal) trainHelpModal.setAttribute("aria-hidden", "false");
+}
+function closeTrainHelp() {
+  if (trainHelpModal) trainHelpModal.setAttribute("aria-hidden", "true");
+}
+if (trainHelpBtn) trainHelpBtn.addEventListener("click", openTrainHelp);
+if (trainHelpClose) trainHelpClose.addEventListener("click", closeTrainHelp);
+if (trainHelpModal) trainHelpModal.addEventListener("click", (e) => {
+  if (e.target === trainHelpModal) closeTrainHelp();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeTrainHelp();
+});

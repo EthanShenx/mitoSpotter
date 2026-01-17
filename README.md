@@ -1,54 +1,107 @@
-# An easy *mitoSpotter* running pipeline for markers <img src='./webui/static/logo.png' align="right" alt="" width="120" />
+# mitoSpotter <img src='./webui/static/logo.png' align="right" alt="" width="120" />
 
-Welcome to the *mitoSpotter* marker analysis pipeline! This notebook provides a step-by-step guide to identifying mitochondrial and nuclear gene markers using Hidden Markov Models (HMMs). Whether you are new to bioinformatics or an experienced researcher, this pipeline is designed to be accessible, reproducible, and efficient.
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![Flask](https://img.shields.io/badge/Flask-2.0+-000000?style=flat&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![NumPy](https://img.shields.io/badge/NumPy-1.21+-013243?style=flat&logo=numpy&logoColor=white)](https://numpy.org/)
+[![BioPython](https://img.shields.io/badge/BioPython-1.79+-3776AB?style=flat&logo=python&logoColor=white)](https://biopython.org/)
+[![Matplotlib](https://img.shields.io/badge/Matplotlib-3.5+-11557C?style=flat)](https://matplotlib.org/)
+[![Pandas](https://img.shields.io/badge/Pandas-1.4+-150458?style=flat&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat)](LICENSE)
 
-All the data, scripts, and output from scripts are already in-place in our well-structured directory. Detailed file connection illustration is as follows.
+A **Hidden Markov Model (HMM)** based tool to classify nuclear genes and mitochondria genes in an annotation-independent manner.
 
-**NOTE:** This `README.md` provides the exact same workflow and instrcution as the one in `easyMarking.ipynb`. So if you wanna replace the code or some arguments and run directly, we highly recommand you to follow the jupyter notebook version.
+---
+
+## Benchmark Results
+
+Our model has been rigorously tested on both same-species and cross-species datasets. The results demonstrate strong classification accuracy across different experimental setups.
+
+| Benchmark Type | Description | Results |
+|:---:|:---|:---:|
+| **Same Species** | Evaluation on human gene sequences with train/test split | [View Results](./webui/static/Benchmark/human_benchmark.pdf) |
+| **Cross Species** | Generalization test across human, mouse, and rat genomes | [View Results](./webui/static/Benchmark/Cross_benchmark.pdf) |
+
+> **Key Finding:** The 3-nt (trinucleotide) EM model consistently achieves the highest accuracy and demonstrates the strongest cross-species generalizability.
+
+---
+
+## Pipeline Overview
+
+### Training Workflow
+
+The training pipeline processes genomic data through a series of steps to build the HMM classifier:
+
+![Training Pipeline](./webui/static/Training.png)
+
+### Decoding Workflow
+
+Once trained, the model can classify new sequences using Viterbi decoding:
+
+![Decoding Pipeline](./webui/static/Decoding.png)
+
+---
+
+## Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/EthanShenx/mitoSpotter.git
+cd mitoSpotter
+
+# Create conda environment
+conda env create -f env/environment-mac.yml  # or environment-windows.yml
+conda activate mitoSpotter
+
+# Run the web UI
+python -m webui.app
+# Visit http://localhost:8000
+```
+
+---
+
+## Directory Structure
+
+All the data, scripts, and output from scripts are already in-place in our well-structured directory:
 
 ![All scripts documentation](./webui/static/All_scripts_documentation.jpg)
 
-All the preprocessed dataset (e.g., output from 01-03 scripts have been deposited in out_dir directory, but if you want to run this part, you can still do it!).
+```
+/mitoSpotter
+├── scripts/                    # Core pipeline scripts
+│   ├── 01_from_gtf_extract_id.py
+│   ├── 02_fasta_split_by_id.py
+│   ├── 03_sequence2unit_nt.py
+│   ├── 04_train_hmm_nt.py
+│   └── 05_decode_path_nt.py
+├── webui/                      # Flask web application
+├── data/                       # Input genomic data
+├── out_dir/                    # Pipeline outputs
+└── env/                        # Conda environments
+```
 
-## At a glimpse: Overall script structure
+**NOTE:** This `README.md` provides the exact same workflow and instruction as the one in `easyMarking.ipynb`. If you want to replace the code or some arguments and run directly, we highly recommend you to follow the Jupyter notebook version.
 
-Below is the directory structure of the `scripts/` folder, which contains all Python scripts used in this pipeline. The flow is sequential and each script performs a specific task. The output of one script serves as the input for the next.
+---
 
-/mitoSpotter/scripts  
-├── 01_from_gtf_extract_id.py  
-├── 02_fasta_split_by_id.py  
-├── 03_sequence2unit_nt.py  
-├── 04_train_hmm_nt.py  
-└── 05_decode_path_nt.py  
-
-## Before we start
-
+## Step-by-Step Pipeline
 
 ### Prerequisites
 
-Before executing any cells in this notebook, please ensure the following:
+Before executing any commands, please ensure:
 
-1. **Environment Setup**:  
-   You should have configured the conda or virtual environment as described in the main documentation. Also, ensure that the correct kernel is selected in your Jupyter environment.
+1. **Environment Setup**: Configure the conda environment as described above.
 
-2. **Download Required Data**:  
-   The pipeline depends on two essential genomic files:
+2. **Download Required Data** (if not in `/mitoSpotter/data`):
    - **CDS genome file**: [Homo_sapiens.GRCh38.cds.all.fa.gz](https://42basepairs.com/browse/web/ensembl/release-82/fasta/homo_sapiens/cds?file=Homo_sapiens.GRCh38.cds.all.fa.gz&preview=)
-   - **GTF annotation file**: [Homo_sapiens.GRCh38.115.chr.gtf.gz](https://ftp.ensembl.org/pub/release-115/gtf/homo_sapiens/Homo_sapiens.GRCh38.115.chr.gtf.gz)  
-   Download and place them in the `/mitoSpotter/data` directory. *Note: This download may take several minutes depending on your connection speed.*
+   - **GTF annotation file**: [Homo_sapiens.GRCh38.115.chr.gtf.gz](https://ftp.ensembl.org/pub/release-115/gtf/homo_sapiens/Homo_sapiens.GRCh38.115.chr.gtf.gz)
 
-3. **Import Necessary Packages**:  
-   Run the cell below to import the required Python libraries. Importing is expected to take around 30s.
+---
 
-## STEP 1: EXTRACT NUCLEAR AND MITOCHONDRIA GENE ID
+### Step 1: Extract Gene IDs
 
-**Input**: GTF file  
-**Output**: Two text files containing mitochondrial and nuclear gene IDs.  
-**Key parameter**: `--protein_coding_only` ensures we only retain protein-coding genes, which are relevant for marker identification.
-
-This step is expected to no more than 15s.
-
-Note: If you use powershell, you should replace the `\` with a backtick.
+**Input**: GTF file
+**Output**: Two text files containing mitochondrial and nuclear gene IDs
+**Runtime**: ~15 seconds
 
 ```bash
 python scripts/01_from_gtf_extract_id.py \
@@ -58,25 +111,17 @@ python scripts/01_from_gtf_extract_id.py \
   --protein_coding_only
 ```
 
-### Expected Output
+**Expected Output:**
 
 ![01 output](./webui/static/01_output.png)
 
-## 02 SPLIT FASTA BY ID
+---
 
-**Input**: A complete *5'UTR + CDS + 3' UTR* genome sequence file (FASTA format, from the previous step), the reason why use *5'UTR + CDS + 3' UTR* genome sequence is detailed at the *end* of this notebook.
+### Step 2: Split FASTA by ID
 
+**Input**: Complete *5'UTR + CDS + 3'UTR* genome sequence file (FASTA format)
 **Output**: Two FASTA files containing mitochondrial and nuclear gene sequences
-
-**Key parameters**:
-
-- `--mito_ids`: Path to file containing mitochondrial gene IDs
-
-- `--nuc_ids`: Path to file containing nuclear gene IDs
-
-- `--prefix`: Custom prefix for output filenames
-
-This step is expected to take no longer than 30s.
+**Runtime**: ~30 seconds
 
 ```bash
 python scripts/02_fasta_split_by_id.py \
@@ -87,69 +132,64 @@ python scripts/02_fasta_split_by_id.py \
   --prefix human_marker_testing_
 ```
 
-### Expected Output
+**Expected Output:**
 
 ![02 output](./webui/static/02_output.png)
 
-## 03 SEQUENCE TO NUCLEOTIDE UNIT
+---
+
+### Step 3: Sequence to Nucleotide Units
 
 **Input**: Two FASTA files (mitochondrial and nuclear sequences)
-
 **Output**: Train and test TSV files for each gene type
+**Runtime**: ~1 minute
 
-**Key parameters**: `--ngram 3` creates 3-nucleotide (codon) units, which are biologically meaningful for protein-coding genes. If you have nucleotide sequence that has intron and hasn't been translated, consider adding `--skip_phase_check` flag.
-
-**Purpose**: This step will perform the sequence unit cutting and train/test split for subsequent model training. This step is expected to take no more than **1 minute**.
+**Key parameters**:
+- `--ngram 3` creates 3-nucleotide (codon) units, biologically meaningful for protein-coding genes
+- Add `--skip_phase_check` if your sequences contain introns
 
 ```bash
 for loc in nuclear mito; do
   for kind in cds; do
     for mode in 3nt 2nt 1nt; do
-
       echo "Running: $loc $kind $mode"
-
       python scripts/03_sequence2unit_nt.py \
         --fasta out_dir/02_split_fasta/human_marker_testing_${loc}_${kind}.fa \
         --mode $mode \
         --train_tsv out_dir/03_unit/train/human_marker_testing_${loc}_${mode}_train.tsv \
         --holdout_tsv out_dir/03_unit/holdout/human_marker_testing_${loc}_${mode}_holdout.tsv \
         --train_frac 0.7
-
     done
   done
 done
 ```
 
-### Expected Output
+**Expected Output:**
 
 ![03 output](./webui/static/03_output.png)
 
-## 04 TRAIN HMM
+---
 
-Yeahh! Finally comes into training phase! Let me take 3-nt level for example.
+### Step 4: Train HMM
 
-Note: All the pre-trained results that you can see in the `out_dir/model` directory are trained without sampling and early stop convergence. With sampling srategies used below, although the model trained by you will be slightly a little bit different from ours, but efficient and of high quality as well.
-
-**Input**: Train TSV files from Step 3 (3-nt units)
-
+**Input**: Train TSV files from Step 3
 **Output**: Model JSON files (model, vocabulary, states)
+**Runtime**: ~5 minutes with downsampling
 
-**Training method**: `--train_method` can be one of the following:
+**Training methods:**
+| Method | Description |
+|--------|-------------|
+| `em` | Expectation-Maximization (Baum-Welch) |
+| `viterbi` | Viterbi training (hard EM) |
+| `hybrid` | EM followed by Viterbi fine-tuning |
 
-- `em`: Expectation-Maximization
-- `viterbi`: Viterbi training
-- `hybrid`: Combination of EM and Viterbi, where `--n_em_iter` and `--n_viterbi_iter` control the number of iterations for each method.
-
-**Key parameters**:
-
+**Key parameters:**
 - `--ngram 3`: Match the unit size from Step 3
-- `--learn et`: Optimize both Emission and Transition probabilities (super important!)
-- `--sample`: Downsample rate for faster training (0.01 = 1% of data)
-- `--n_workers`: Number of parallel workers (for Mac/Linux; remove for Windows)
+- `--learn et`: Optimize both Emission and Transition probabilities *(important!)*
+- `--sample`: Downsample rate for faster training
+- `--n_workers`: Number of parallel workers (Mac/Linux only)
 
-### EM
-
-Expected to take no longer than 5 minutes with downsampling.
+#### EM Training
 
 ```bash
 python scripts/04_train_hmm_nt.py \
@@ -167,7 +207,7 @@ python scripts/04_train_hmm_nt.py \
   --n_workers 2
 ```
 
-### Viterbi
+#### Viterbi Training
 
 ```bash
 python scripts/04_train_hmm_nt.py \
@@ -185,10 +225,9 @@ python scripts/04_train_hmm_nt.py \
   --n_workers 2
 ```
 
-### Hybrid
+#### Hybrid Training
 
 ```bash
-# Let's make em 0.5 and viterbi 0.5 (1:1)
 python scripts/04_train_hmm_nt.py \
   --nuclear_nt_tsv out_dir/03_unit/train/human_marker_testing_nuclear_3nt_train.tsv \
   --mito_nt_tsv out_dir/03_unit/train/human_marker_testing_mito_3nt_train.tsv \
@@ -205,13 +244,13 @@ python scripts/04_train_hmm_nt.py \
   --n_workers 2
 ```
 
-## 05 SEQUENCE DECODING
+---
+
+### Step 5: Sequence Decoding
 
 ![05 param](./webui/static/05_param.png)
 
-### FASTA
-
-The FASTA file we provided contains a single CDS. This will take about 3s.
+#### Decode from FASTA file
 
 ```bash
 python scripts/05_decode_path_nt.py \
@@ -226,9 +265,7 @@ python scripts/05_decode_path_nt.py \
   --track_memory
 ```
 
-### ARGUMENT SEQUENCE PASSING
-
-This is expected to take less than 3s.
+#### Decode from command-line arguments
 
 ```bash
 python scripts/05_decode_path_nt.py \
@@ -246,30 +283,57 @@ python scripts/05_decode_path_nt.py \
   --track_memory
 ```
 
-## Visualization of Results
+---
 
-The decoding step also generates several informative plots (if you pass `--plotting`) to help you interpret prediction results from the model and the compositional features of your sequences. The plots will be saved in the same directory where you run the script.
+## Visualization Examples
 
-These are some examples of some plots will be generated if you input multiple sequences:
+The decoding step generates informative plots (with `--plotting` flag):
 
-- **Classification Counts**: Shows the proportion of sequences classified as nuclear vs. mitochondrial.  
-  ![classification_counts](./webui/static/Plot_example/classification_counts.png)
+| Plot | Description |
+|:---:|:---|
+| ![classification_counts](./webui/static/Plot_example/classification_counts.png) | **Classification Counts**: Proportion of sequences classified as nuclear vs. mitochondrial |
+| ![gc_content](./webui/static/Plot_example/gc_content_stacked_bar.png) | **GC Content**: GC content proportion across sequences |
+| ![loglikelihood](./webui/static/Plot_example/loglikelihood_distribution.png) | **Log-Likelihood Distribution**: Model fit scores for decoded sequences |
+| ![state_proportions](./webui/static/Plot_example/state_proportions_stacked_bar.png) | **Hidden State Proportions**: Time spent in nuclear vs. mitochondrial states |
 
-- **GC Content per Sequence**: Shows the GC content proportion across sequences, which often differs between nuclear and mitochondrial genes.
-  ![gc_content_stacked_bar](./webui/static/Plot_example/gc_content_stacked_bar.png)
+---
 
-- **Log-Likelihood Distribution**: Displays the log-likelihood scores for all decoded sequences; higher values indicate better model fit.
-  ![loglikelihood_distribution](./webui/static/Plot_example/loglikelihood_distribution.png)
+## Using Your Own Data
 
-- **Hidden State Proportions**: Illustrates the proportion of "time" each sequence spends in the "nuclear" or "mitochondrial" hidden state.
-  ![state_proportions_stacked_bar](./webui/static/Plot_example/state_proportions_stacked_bar.png)
-  
-## If I want to test the model with my own genome, what should I do?
+In our training setup, the input for each gene was its complete transcript sequence (**5′ UTR + CDS + 3′ UTR**), rather than the CDS alone. This design accounts for the fact that UTRs differ substantially between mtGenes and nGenes:
 
-In our training setup, the input for each gene was its complete transcript sequence (5′ UTR + CDS + 3′ UTR), rather than the CDS alone. This design was due to the fact that UTRs differ substantially between mtGenes and nGenes. For example, the 3′ UTRs of mtGenes often lack microRNA-binding sites and the canonical polyadenylation signals that are typically present in nGene 3′ UTRs (see below for details).       
+- mtGene 3′ UTRs often lack microRNA-binding sites
+- mtGene 3′ UTRs typically lack canonical polyadenylation signals
 
-So if you want to test our training-decoding workflow with *YOUR* data, 5' UTR + CDS + 3' UTR sequence is preferred.
+![FASTA Example](./webui/static/FASTA_example.jpg)
 
-Enjoy using our software.
+**Recommendation:** For best results with your own data, use **5′ UTR + CDS + 3′ UTR** sequences.
 
-![FASTA](./webui/static/FASTA_example.jpg)
+---
+
+## Web Interface
+
+mitoSpotter includes a modern web interface for both training and decoding:
+
+```bash
+python -m webui.app
+# Open http://localhost:8000
+```
+
+Features:
+- Interactive sequence input (paste or upload FASTA)
+- Real-time training progress with progress bar
+- Visualization of results
+- Export results as TSV/CSV
+
+---
+
+## Authors
+
+Designed by [Yuchen (Ethan) Shen](https://github.com/EthanShenx) and [Yuxin (Gabriel) Wu](https://github.com/GabrielWuyuxin), inspired by the Biomedical Informatics 3 course at [ZJE](https://zje.zju.edu.cn/zje/main.htm).
+
+---
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.

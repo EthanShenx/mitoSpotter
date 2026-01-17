@@ -1,20 +1,26 @@
 from __future__ import annotations
 # Flask web entrypoint for mitoSpotter demo UI and API
 
+import json
+import queue
 import tempfile
+import threading
+import time
 # Standard library imports and typing helpers
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Generator
 
 try:  # Allow running via `python -m webui.app` or `python webui/app.py`
     from .pipeline_runner import DecodeConfig, DecodeRunner
+    from .training_runner import TrainingConfig, TrainingRunner
 except ImportError:  # pragma: no cover - fallback for direct execution
     import sys
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
     from webui.pipeline_runner import DecodeConfig, DecodeRunner  # type: ignore
+    from webui.training_runner import TrainingConfig, TrainingRunner  # type: ignore
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 # Flask app configured to serve static assets and JSON APIs
 
 
@@ -23,6 +29,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 decode_config = DecodeConfig.with_project_defaults(PROJECT_ROOT)
 runner = DecodeRunner(decode_config)
+
+# Initialize training runner
+training_runner = TrainingRunner(PROJECT_ROOT)
+
+# Store for SSE progress queues (job_id -> queue)
+training_progress_queues: dict = {}
 
 
 def refresh_runner() -> None:
@@ -208,6 +220,150 @@ def get_plot(relpath: str):
         return jsonify({"error": "File not found"}), 404
 
     return send_from_directory(abs_path.parent, abs_path.name)
+
+
+# -------------------- Training API Endpoints -------------------- #
+
+@app.post("/api/train")
+def start_training():
+    """Start a new training job. Returns job_id for progress tracking."""
+    form = request.form
+
+    # Get uploaded files
+    nuclear_file = request.files.get("nuclear_tsv")
+    mito_file = request.files.get("mito_tsv")
+
+    if not nuclear_file or not nuclear_file.filename:
+        return jsonify({"error": "Nuclear TSV file is required"}), 400
+    if not mito_file or not mito_file.filename:
+        return jsonify({"error": "Mito TSV file is required"}), 400
+
+    # Save uploaded files to temp directory
+    temp_dir = Path(tempfile.mkdtemp(prefix="mitospotter_train_"))
+    nuclear_path = temp_dir / "nuclear.tsv"
+    mito_path = temp_dir / "mito.tsv"
+
+    nuclear_file.save(str(nuclear_path))
+    mito_file.save(str(mito_path))
+
+    # Parse training parameters
+    ngram = int(form.get("ngram", "1"))
+    train_method = form.get("train_method", "em")
+    learn = form.get("learn", "et")
+    n_em_iter = int(form.get("n_em_iter", "20"))
+    n_viterbi_iter = int(form.get("n_viterbi_iter", "20"))
+    self_loop = float(form.get("self_loop", "0.995"))
+    emis_smooth = float(form.get("emis_smooth", "1.0"))
+    trans_smooth = float(form.get("trans_smooth", "1.0"))
+    sample = float(form.get("sample", "1.0"))
+
+    # Determine output directory
+    output_dir = PROJECT_ROOT / "out" / f"{ngram}nt"
+
+    # Create training config
+    config = TrainingConfig(
+        nuclear_tsv=nuclear_path,
+        mito_tsv=mito_path,
+        output_dir=output_dir,
+        ngram=ngram,
+        train_method=train_method,
+        learn=learn,
+        n_em_iter=n_em_iter,
+        n_viterbi_iter=n_viterbi_iter,
+        self_loop=self_loop,
+        emis_smooth=emis_smooth,
+        trans_smooth=trans_smooth,
+        sample=sample,
+    )
+
+    # Create job
+    job = training_runner.create_job(config)
+
+    # Create progress queue for this job
+    progress_queue: queue.Queue = queue.Queue()
+    training_progress_queues[job.job_id] = progress_queue
+
+    # Start training in background thread
+    def run_training():
+        def progress_callback(info: dict):
+            try:
+                progress_queue.put_nowait(info)
+            except queue.Full:
+                pass
+
+        try:
+            training_runner.run_training(job, progress_callback)
+        finally:
+            # Signal completion
+            progress_queue.put({"type": "done"})
+            # Clean up temp files after a delay
+            def cleanup():
+                time.sleep(5)
+                try:
+                    nuclear_path.unlink(missing_ok=True)
+                    mito_path.unlink(missing_ok=True)
+                    temp_dir.rmdir()
+                except Exception:
+                    pass
+            threading.Thread(target=cleanup, daemon=True).start()
+
+    thread = threading.Thread(target=run_training, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "job_id": job.job_id,
+        "status": "started",
+        "message": "Training job started. Use /api/train/progress/<job_id> for SSE updates."
+    })
+
+
+@app.get("/api/train/progress/<job_id>")
+def training_progress(job_id: str):
+    """SSE endpoint for real-time training progress."""
+    progress_queue = training_progress_queues.get(job_id)
+
+    if not progress_queue:
+        return jsonify({"error": "Job not found"}), 404
+
+    def generate() -> Generator[str, None, None]:
+        """Generate SSE events from the progress queue."""
+        while True:
+            try:
+                # Wait for progress update with timeout
+                info = progress_queue.get(timeout=30)
+
+                # Check for completion signal
+                if info.get("type") == "done":
+                    job = training_runner.get_job(job_id)
+                    if job:
+                        yield f"data: {json.dumps(job.to_dict())}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    break
+
+                yield f"data: {json.dumps(info)}\n\n"
+
+            except queue.Empty:
+                # Send keepalive
+                yield f": keepalive\n\n"
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+@app.get("/api/train/status/<job_id>")
+def training_status(job_id: str):
+    """Get current status of a training job."""
+    job = training_runner.get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(job.to_dict())
 
 
 if __name__ == "__main__":

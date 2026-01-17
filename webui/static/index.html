@@ -9,18 +9,48 @@
       <link rel="stylesheet" href="/static/styles.css" />
     </head>
   <body>
+    <!-- Floating Side Tabs for Benchmarks -->
+    <div class="side-tabs">
+      <a href="/static/Benchmark/human_benchmark.pdf" target="_blank" rel="noopener" class="side-tab" title="Same Species Benchmark">
+        <span class="side-tab-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="7" r="4"/>
+            <path d="M5.5 21a7.5 7.5 0 0 1 13 0"/>
+          </svg>
+        </span>
+        <span class="side-tab-label">Same Species Benchmark</span>
+      </a>
+      <a href="/static/Benchmark/Cross_benchmark.pdf" target="_blank" rel="noopener" class="side-tab" title="Cross Species Benchmark">
+        <span class="side-tab-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 3h5v5"/>
+            <path d="M8 21H3v-5"/>
+            <path d="M21 3L3 21"/>
+          </svg>
+        </span>
+        <span class="side-tab-label">Cross Species Benchmark</span>
+      </a>
+    </div>
+
     <header class="app-header">
       <div class="header-inner">
         <div class="brand">
-          <h1><em>mitoSpotter</em></h1>
+          <h1><em>mito</em>Spotter</h1>
           <p>A HMM-based tool to classify nuclear genes and mitochondria genes in an annotation-independent manner.</p>
         </div>
-        <img src="/static/logo.png" alt="mitoSpotter logo" class="site-logo" />
+        <a href="https://github.com/EthanShenx/mitoSpotter" target="_blank" rel="noopener"><img src="/static/logo.png" alt="mitoSpotter logo" class="site-logo" /></a>
       </div>
     </header>
 
     <main class="app-main">
-      <section class="card">
+      <!-- Tab Navigation -->
+      <div class="tab-nav">
+        <button class="tab-btn active" data-tab="decode">Decode</button>
+        <button class="tab-btn" data-tab="train">Train</button>
+      </div>
+
+      <!-- Decode Tab -->
+      <section class="card tab-content active" id="decode-tab">
         <div class="card-header">
           <h2>Decode</h2>
           <button id="help-btn" class="help-btn" type="button">See instructions</button>
@@ -52,7 +82,7 @@
               id="sequence_text"
               name="sequence_text"
               rows="8"
-              placeholder=">seq1\nATG...\n>seq2\n... or enter raw sequences per line"
+              placeholder=">seq1&#10;ATG...&#10;>seq2&#10;... or enter raw sequences per line"
             ></textarea>
             <small>Paste FASTA-formatted or plain sequences (optional).</small>
           </div>
@@ -61,7 +91,7 @@
             <div class="label-row">
               <label for="fasta_file">Upload FASTA</label>
               <div class="inline-actions">
-                <span id="fasta-loaded-badge" class="badge-check" hidden title="FASTA loaded" aria-live="polite">✓</span>
+                <span id="fasta-loaded-badge" class="badge-check" hidden title="FASTA loaded" aria-live="polite">&#10003;</span>
                 <button type="button" id="load-demo-fasta" class="demo-button">Load demo FASTA</button>
               </div>
             </div>
@@ -90,6 +120,121 @@
         <div id="status" class="status" role="status" aria-live="polite"></div>
       </section>
 
+      <!-- Train Tab -->
+      <section class="card tab-content" id="train-tab">
+        <div class="card-header">
+          <h2>Train</h2>
+          <button id="train-help-btn" class="help-btn" type="button">See instructions</button>
+        </div>
+        <form id="train-form" class="form-grid">
+          <div class="form-group">
+            <label for="nuclear_tsv">Nuclear Sequences TSV</label>
+            <input type="file" id="nuclear_tsv" name="nuclear_tsv" accept=".tsv,.txt" required />
+            <small>TSV file with nuclear gene sequences (ID + space-separated tokens).</small>
+          </div>
+
+          <div class="form-group">
+            <label for="mito_tsv">Mitochondrial Sequences TSV</label>
+            <input type="file" id="mito_tsv" name="mito_tsv" accept=".tsv,.txt" required />
+            <small>TSV file with mitochondrial gene sequences.</small>
+          </div>
+
+          <div class="form-group">
+            <label>N-gram Size</label>
+            <div role="group" aria-label="N-gram Size" class="radio-row">
+              <label class="radio"><input type="radio" name="train_ngram" value="1" checked /> 1-nt (nucleotide)</label>
+              <label class="radio"><input type="radio" name="train_ngram" value="2" /> 2-nt (dinucleotide)</label>
+              <label class="radio"><input type="radio" name="train_ngram" value="3" /> 3-nt (trinucleotide)</label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Training Method</label>
+            <div role="group" aria-label="Training Method" class="radio-row">
+              <label class="radio"><input type="radio" name="train_method" value="em" checked /> EM (Baum-Welch)</label>
+              <label class="radio"><input type="radio" name="train_method" value="viterbi" /> Viterbi</label>
+              <label class="radio"><input type="radio" name="train_method" value="hybrid" /> Hybrid</label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Learning Mode</label>
+            <div role="group" aria-label="Learning Mode" class="radio-row">
+              <label class="radio"><input type="radio" name="learn" value="et" checked /> Emissions + Transitions</label>
+              <label class="radio"><input type="radio" name="learn" value="t" /> Transitions only</label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="n_em_iter">EM Iterations</label>
+            <input type="number" id="n_em_iter" name="n_em_iter" value="20" min="1" max="100" />
+          </div>
+
+          <div class="form-group">
+            <label for="n_viterbi_iter">Viterbi Iterations</label>
+            <input type="number" id="n_viterbi_iter" name="n_viterbi_iter" value="20" min="1" max="100" />
+          </div>
+
+          <div class="form-group">
+            <label for="sample">Sample Fraction</label>
+            <input type="number" id="sample" name="sample" value="1.0" min="0.01" max="1.0" step="0.01" />
+            <small>Fraction of nuclear sequences to use (0.01-1.0).</small>
+          </div>
+
+          <!-- Advanced Settings (collapsible) -->
+          <details class="form-group span-2 advanced-settings">
+            <summary>Advanced Settings</summary>
+            <div class="advanced-grid">
+              <div class="form-group">
+                <label for="self_loop">Self-loop Probability</label>
+                <input type="number" id="self_loop" name="self_loop" value="0.995" min="0.5" max="0.999" step="0.001" />
+              </div>
+              <div class="form-group">
+                <label for="emis_smooth">Emission Smoothing</label>
+                <input type="number" id="emis_smooth" name="emis_smooth" value="1.0" min="0.1" max="10" step="0.1" />
+              </div>
+              <div class="form-group">
+                <label for="trans_smooth">Transition Smoothing</label>
+                <input type="number" id="trans_smooth" name="trans_smooth" value="1.0" min="0.1" max="10" step="0.1" />
+              </div>
+            </div>
+          </details>
+
+          <div class="form-actions span-2">
+            <button type="submit" class="primary" id="train-submit-btn">Start Training</button>
+            <button type="reset" class="secondary">Clear</button>
+          </div>
+        </form>
+
+        <!-- Training Progress Section -->
+        <div id="train-progress" class="train-progress" hidden>
+          <div class="progress-header">
+            <span id="train-phase">Initializing...</span>
+            <span id="train-percent">0%</span>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar" id="train-progress-bar"></div>
+          </div>
+          <div class="progress-details">
+            <span id="train-iteration">Iteration: 0/0</span>
+            <span id="train-loglik">Log-likelihood: --</span>
+          </div>
+          <div id="train-message" class="train-message"></div>
+        </div>
+
+        <div id="train-status" class="status" role="status" aria-live="polite"></div>
+
+        <!-- Training Results -->
+        <div id="train-results" class="train-results" hidden>
+          <h3>Training Complete</h3>
+          <div class="result-details">
+            <p><strong>Model saved:</strong> <span id="result-model-path"></span></p>
+            <p><strong>Sequences processed:</strong> <span id="result-sequences"></span></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Results Card (for Decode) -->
       <section class="card" id="results-card" hidden>
         <div class="card-header">
           <h2>Results</h2>
@@ -126,7 +271,9 @@
       </section>
     </main>
 
-    
+    <footer class="app-footer">
+      Designed by <a href="https://github.com/EthanShenx" target="_blank" rel="noopener">Yuchen (Ethan) Shen</a> and <a href="https://github.com/GabrielWuyuxin" target="_blank" rel="noopener">Yuxin (Gabriel) Wu</a>, inspired by <a href="https://github.com/EthanShenx/mitoSpotter" target="_blank" rel="noopener">Biomedical Informatics 3 course</a> at <a href="https://zje.zju.edu.cn/zje/main.htm" target="_blank" rel="noopener">ZJE</a>
+    </footer>
 
     <!-- Lightbox modal for zooming and downloading plots -->
     <div class="lightbox" id="lightbox" aria-hidden="true" role="dialog" aria-label="Plot viewer">
@@ -152,63 +299,121 @@
         <div class="modal-content">
           <h4>Overview</h4>
           <ul>
-            <li>Classifies sequences as nuclear vs mitochondrial using a 2‑state HMM.</li>
-            <li>Supports 1‑nt, 2‑nt, and 3‑nt (codon‑stride) tokenization; EM or Viterbi‑trained models.</li>
+            <li>Classifies sequences as nuclear vs mitochondrial using a 2-state HMM.</li>
+            <li>Supports 1-nt, 2-nt, and 3-nt (codon-stride) tokenization; EM or Viterbi-trained models.</li>
           </ul>
 
           <h4>Inputs</h4>
           <ul>
             <li>Paste nucleotide sequences in FASTA (starts with <code>&gt;</code>) or plain lines (one per sequence).</li>
             <li>Or upload a single FASTA file (mutually exclusive with the demo sequence helper).</li>
-            <li>Sequences are cleaned (uppercase, U→T, non‑ACGT removed) before tokenization.</li>
+            <li>Sequences are cleaned (uppercase, U-T, non-ACGT removed) before tokenization.</li>
           </ul>
 
           <h4>Decoder Type (EM) and Regime</h4>
           <ul>
-            <li><strong>Decoder Type</strong>: choose <em>1‑nt</em>, <em>2‑nt</em>, or <em>3‑nt</em>.
-              <br/>1‑nt uses single bases; 2‑nt uses overlapping dinucleotides; 3‑nt uses non‑overlapping codons (reading‑frame stride).</li>
+            <li><strong>Decoder Type</strong>: choose <em>1-nt</em>, <em>2-nt</em>, or <em>3-nt</em>.
+              <br/>1-nt uses single bases; 2-nt uses overlapping dinucleotides; 3-nt uses non-overlapping codons (reading-frame stride).</li>
             <li><strong>Training Regime</strong>: choose <em>Pure EM</em> or <em>Pure Viterbi</em>. Hybrid models are not shown.</li>
-            <li>Tip: our benchmarks indicate 3‑nt EM often yields the strongest accuracy and cross‑species generalizability.</li>
+            <li>Tip: our benchmarks indicate 3-nt EM often yields the strongest accuracy and cross-species generalizability.</li>
           </ul>
 
           <h4>Options</h4>
           <ul>
-            <li><strong>Include Viterbi state path</strong>: returns the most likely N/M path per sequence; the UI renders a compact run‑length bar.</li>
-            <li><strong>Generate and show plots</strong>: creates GC/AT and state‑proportion charts, classification counts, and log‑likelihood distribution.
+            <li><strong>Include Viterbi state path</strong>: returns the most likely N/M path per sequence; the UI renders a compact run-length bar.</li>
+            <li><strong>Generate and show plots</strong>: creates GC/AT and state-proportion charts, classification counts, and log-likelihood distribution.
               <br/>Requires <code>matplotlib</code> in the server environment.</li>
           </ul>
 
           <h4>Run</h4>
           <ul>
-            <li>Click “Run Decode”. Status appears above; errors explain what to fix.</li>
+            <li>Click "Run Decode". Status appears above; errors explain what to fix.</li>
             <li>For short fragments, consider lowering the threshold (the decoder minimum length is 150 nt by default).</li>
           </ul>
 
           <h4>Interpret the results</h4>
           <ul>
-            <li><strong>Summary</strong>: one‑line prediction for the first record.</li>
-            <li><strong>Plots</strong>: click a thumbnail to zoom and optionally download. No auto‑downloads.</li>
+            <li><strong>Summary</strong>: one-line prediction for the first record.</li>
+            <li><strong>Plots</strong>: click a thumbnail to zoom and optionally download. No auto-downloads.</li>
             <li><strong>Table</strong> (one row per sequence):
               <br/><em>ID</em> = sequence id;
               <em>Call</em> = predicted class;
               <em>Nuclear% / Mito%</em> = fraction of the Viterbi path in each state;
-              <em>Length</em> = nucleotide length (1‑nt) or token count (2‑/3‑nt).</li>
-            <li><strong>Paths</strong> (if enabled): run‑length view of N (nuclear) and M (mitochondrial‑like) along the sequence.</li>
+              <em>Length</em> = nucleotide length (1-nt) or token count (2-/3-nt).</li>
+            <li><strong>Paths</strong> (if enabled): run-length view of N (nuclear) and M (mitochondrial-like) along the sequence.</li>
           </ul>
 
           <h4>Export</h4>
           <ul>
-            <li>Use the “Download Results” menu to export TSV/CSV.</li>
+            <li>Use the "Download Results" menu to export TSV/CSV.</li>
             <li>TSV includes optional <code>#&lt;id&gt;_PATH</code> lines with state sequences when path emission is enabled.</li>
           </ul>
 
           <h4>Tips & troubleshooting</h4>
           <ul>
             <li>If no rows are returned, inputs may be shorter than the minimum length or filtered out; try longer sequences or lower the threshold.</li>
-            <li>Ensure the selected decoder type (1/2/3‑nt) matches the trained model used.</li>
-            <li>On Windows, make sure <code>matplotlib</code> is installed in the same environment running the server if plots don’t show.</li>
-            <li>Switch between 1‑nt and 3‑nt EM on the same input to compare model sensitivity.</li>
+            <li>Ensure the selected decoder type (1/2/3-nt) matches the trained model used.</li>
+            <li>On Windows, make sure <code>matplotlib</code> is installed in the same environment running the server if plots don't show.</li>
+            <li>Switch between 1-nt and 3-nt EM on the same input to compare model sensitivity.</li>
             <li>Demo FASTA and demo sequence helpers are mutually exclusive; switching clears the other.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Training Instructions modal -->
+    <div class="modal" id="train-help-modal" aria-hidden="true" role="dialog" aria-label="Training Instructions">
+      <div class="modal-inner" role="document">
+        <div class="modal-header">
+          <h3>How to Train a Model</h3>
+          <button class="icon-btn" id="train-help-close" type="button" aria-label="Close">Close</button>
+        </div>
+        <div class="modal-content">
+          <h4>Overview</h4>
+          <ul>
+            <li>Train a custom 2-state HMM to classify nuclear vs mitochondrial sequences.</li>
+            <li>Supports EM (Baum-Welch), Viterbi, or hybrid training methods.</li>
+          </ul>
+
+          <h4>Input Files</h4>
+          <ul>
+            <li><strong>Nuclear TSV</strong>: Tab-separated file with nuclear gene sequences. Format: <code>ID\tA C G T ...</code></li>
+            <li><strong>Mito TSV</strong>: Tab-separated file with mitochondrial gene sequences. Same format.</li>
+            <li>Generate these files using the <code>03_sequence2unit_nt.py</code> script from raw FASTA.</li>
+          </ul>
+
+          <h4>N-gram Size</h4>
+          <ul>
+            <li><strong>1-nt</strong>: Single nucleotides (A, C, G, T). 4 emission states.</li>
+            <li><strong>2-nt</strong>: Dinucleotides with sliding window (AA, AC, ..., TT). 16 emission states.</li>
+            <li><strong>3-nt</strong>: Non-overlapping trinucleotides/codons. 64 emission states. Best for CDS analysis.</li>
+          </ul>
+
+          <h4>Training Methods</h4>
+          <ul>
+            <li><strong>EM (Baum-Welch)</strong>: Soft EM using forward-backward algorithm. Generally more accurate.</li>
+            <li><strong>Viterbi</strong>: Hard EM using Viterbi decoding. Faster but may converge to local optima.</li>
+            <li><strong>Hybrid</strong>: EM first, then Viterbi fine-tuning. Best of both worlds.</li>
+          </ul>
+
+          <h4>Learning Mode</h4>
+          <ul>
+            <li><strong>Emissions + Transitions</strong>: Learn both emission and transition probabilities. Recommended.</li>
+            <li><strong>Transitions only</strong>: Keep emissions fixed, only learn transitions.</li>
+          </ul>
+
+          <h4>Advanced Settings</h4>
+          <ul>
+            <li><strong>Sample Fraction</strong>: Use a subset of nuclear sequences for faster training (0.01-1.0).</li>
+            <li><strong>Self-loop Probability</strong>: Initial probability of staying in the same state (default: 0.995).</li>
+            <li><strong>Smoothing</strong>: Laplace smoothing for emission/transition counts.</li>
+          </ul>
+
+          <h4>Output</h4>
+          <ul>
+            <li>Trained models are saved to <code>out/[ngram]nt/</code> directory.</li>
+            <li>Three JSON files are generated: model parameters, vocabulary, and state names.</li>
+            <li>Models can be used immediately in the Decode tab.</li>
           </ul>
         </div>
       </div>
@@ -223,14 +428,14 @@
         </div>
         <div class="modal-content">
           <div class="note-card">
-            <p><strong>Why use Rickettsia prowazekii strain Madrid E’s FASTA?</strong><br/>
+            <p><strong>Why use Rickettsia prowazekii strain Madrid E's FASTA?</strong><br/>
             It is currently one of the closest known bacterial relatives of mitochondria. Its genome organization and sequence features resemble those seen during mitochondrial evolution.</p>
           </div>
           <div class="note-card">
             <p><strong>What to look for with different models?</strong><br/>
-            Using the <em>3‑nt (EM)</em> model, you will often see many genes classified as <strong>M</strong> (mitochondrial‑like), whereas the <em>1‑nt</em> model may not capture this signal. This aligns with our benchmark results, indicating that the <strong>3‑nt EM</strong> model is generally the model with the highest accuracy and strongest cross-species generalizability.</p>
+            Using the <em>3-nt (EM)</em> model, you will often see many genes classified as <strong>M</strong> (mitochondrial-like), whereas the <em>1-nt</em> model may not capture this signal. This aligns with our benchmark results, indicating that the <strong>3-nt EM</strong> model is generally the model with the highest accuracy and strongest cross-species generalizability.</p>
           </div>
-          <p style="opacity:.85">Tip: switch modes (1‑nt ↔ 3‑nt) on the same input to compare predictions.</p>
+          <p style="opacity:.85">Tip: switch modes (1-nt / 3-nt) on the same input to compare predictions.</p>
         </div>
       </div>
     </div>
