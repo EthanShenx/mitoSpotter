@@ -19,6 +19,19 @@
 
 ---
 
+## Table of Contents
+
+- [Benchmark Results](#benchmark-results)
+- [Pipeline Overview](#pipeline-overview)
+- [Quick Start](#quick-start)
+- [Directory Structure](#directory-structure)
+- [Step-by-Step Pipeline](#step-by-step-pipeline)
+- [Visualization Examples](#visualization-examples)
+- [Using Your Own Data](#using-your-own-data)
+- [Web Interface](#web-interface)
+
+---
+
 ## Benchmark Results
 
 Our model has been rigorously tested on both same-species and cross-species datasets. The results demonstrate strong classification accuracy across different experimental setups.
