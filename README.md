@@ -19,6 +19,12 @@
 
 ---
 
+## News
+
+The web version of _mitoSpotter_ is now available! Go [try it out](https://mitospotter.netlabs.cn/).
+
+---
+
 ## Table of Contents
 
 - [Benchmark Results](#benchmark-results)
