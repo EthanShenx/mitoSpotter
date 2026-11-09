@@ -24,7 +24,11 @@
 
 ## News
 
-The web version of _mitoSpotter_ is now available! Go [try it out](https://mitospotter.netlabs.cn/).
+- **2026-11:** _mitoSpotter_ has a new icon!
+
+  <img src="./webui/static/icon.png" alt="mitoSpotter icon" width="120" />
+
+- The web version of _mitoSpotter_ is now available! Go [try it out](https://mitospotter.netlabs.cn/).
 
 ---
 
