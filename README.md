@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="./webui/static/logo.png" alt="mitoSpotter Logo" width="180" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./webui/static/logo-dark.png" />
+  <img src="./webui/static/logo.png" alt="mitoSpotter Logo" width="320" />
+</picture>
 
 # _mitoSpotter_
 

@@ -187,8 +187,8 @@ def healthcheck():
 
 @app.get("/favicon.ico")
 def favicon():
-    # Serve the site logo as the favicon so it appears in the browser tab.
-    return send_from_directory(app.static_folder, "logo.png")
+    # Serve the eye icon as the favicon so it appears in the browser tab.
+    return send_from_directory(app.static_folder, "favicon.ico")
 
 
 @app.get("/api/plots/<path:relpath>")

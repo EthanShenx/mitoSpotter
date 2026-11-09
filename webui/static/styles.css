@@ -206,8 +206,8 @@ body {
 }
 
 .site-logo {
-  width: 96px;
-  height: 96px;
+  width: auto;
+  height: 64px;
   object-fit: contain;
   transition: opacity 150ms var(--ease-out);
 }
@@ -1169,8 +1169,8 @@ small {
   }
 
   .site-logo {
-    width: 48px;
-    height: 48px;
+    width: auto;
+    height: 36px;
   }
 
   .app-main {
